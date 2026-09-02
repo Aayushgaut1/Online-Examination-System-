@@ -64,50 +64,25 @@ export const api = {
 
     const token = authData.session?.access_token || '';
 
-    // 2. Fetch User profile from 'users' table
-    let { data: userProfile, error: userError } = await supabase
+    // 2. Fetch the user profile created by the database trigger.
+    // The frontend must never create a public.users row during login.
+    const { data: userProfile, error: userError } = await supabase
       .from('users')
       .select('*')
       .ilike('email', cleanEmail)
       .maybeSingle();
 
     if (userError) {
-      console.warn('[Supabase Profile] Error querying users table:', userError.message);
+      handleSupabaseError(userError, 'Failed to fetch user profile');
     }
 
-    // Auto-create user record if missing in users table
-    if (!userProfile && authData.user) {
-      const meta = authData.user.user_metadata || {};
-      const role = (meta.role || 'STUDENT').toUpperCase();
-      const name = meta.name || cleanEmail.split('@')[0];
-
-      const { data: insertedUser, error: insertError } = await supabase
-        .from('users')
-        .insert({
-          name,
-          email: cleanEmail,
-          role,
-          password_hash: 'managed_by_supabase_auth',
-          created_at: new Date().toISOString()
-        })
-        .select()
-        .single();
-
-      if (insertError) {
-        console.warn('[Supabase Profile] Auto-insert user warning:', insertError.message);
-      }
-      userProfile = insertedUser || {
-        user_id: 1,
-        name,
-        email: cleanEmail,
-        role: role as any,
-        created_at: new Date().toISOString()
-      };
+    if (!userProfile) {
+      throw new Error('User profile not found. Please contact support.');
     }
 
     // 3. If student, fetch Student profile
     let studentProfile: Student | undefined = undefined;
-    if (userProfile?.role === 'STUDENT') {
+    if (userProfile.role === 'STUDENT') {
       const studentRes = await selectFromTable<Student>('students', 'student', async (tbl) => {
         return await supabase
           .from(tbl)
@@ -127,8 +102,8 @@ export const api = {
           return await supabase
             .from(tbl)
             .insert({
-              user_id: userProfile?.user_id,
-              name: userProfile?.name,
+              user_id: userProfile.user_id,
+              name: userProfile.name,
               email: cleanEmail,
               roll_no: rollNo,
               created_at: new Date().toISOString()
@@ -139,6 +114,16 @@ export const api = {
 
         if (createStudentRes.data) {
           studentProfile = createStudentRes.data;
+        } else {
+          // If it was created concurrently, fetch it again.
+          const fetchStudentRes = await selectFromTable<Student>('students', 'student', async (tbl) => {
+            return await supabase
+              .from(tbl)
+              .select('*')
+              .ilike('email', cleanEmail)
+              .maybeSingle();
+          });
+          studentProfile = fetchStudentRes.data || undefined;
         }
       }
     }
@@ -167,7 +152,8 @@ export const api = {
     const role = (data.role || 'STUDENT').toUpperCase();
     const rollNo = data.roll_no?.trim() || `ROLL-${Math.floor(1000 + Math.random() * 9000)}`;
 
-    // 1. Sign up user in Supabase Auth
+    // 1. Create the user in Supabase Auth.
+    // The database trigger on auth.users automatically creates public.users.
     const { data: authData, error: authError } = await supabase.auth.signUp({
       email: cleanEmail,
       password: data.password.trim(),
@@ -184,45 +170,81 @@ export const api = {
       handleSupabaseError(authError, 'Registration failed in Supabase Auth');
     }
 
-    // 2. Insert into 'users' table
-    let createdUser: User | null = null;
-    const { data: userData, error: userError } = await supabase
-      .from('users')
-      .insert({
-        name: cleanName,
-        email: cleanEmail,
-        role,
-        password_hash: 'managed_by_supabase_auth',
-        created_at: new Date().toISOString()
-      })
-      .select()
-      .single();
+    if (!authData.user) {
+      throw new Error('Registration failed: Supabase did not create the user.');
+    }
 
-    if (userError) {
-      // If user already exists in table, fetch it
-      const { data: existingUser } = await supabase
+    // 2. IMPORTANT: Do NOT insert into public.users here.
+    // The database trigger handle_new_auth_user() creates that row.
+    // This avoids the RLS violation caused by a frontend INSERT.
+    let createdUser: User | null = null;
+
+    // If email confirmation is disabled, Supabase gives us a session immediately.
+    // In that case we can fetch the profile created by the trigger.
+    if (authData.session) {
+      const { data: userData, error: userError } = await supabase
         .from('users')
         .select('*')
         .ilike('email', cleanEmail)
         .maybeSingle();
 
-      if (existingUser) {
-        createdUser = existingUser;
-      } else {
-        handleSupabaseError(userError, 'Failed to save user profile in Supabase');
+      if (userError) {
+        handleSupabaseError(userError, 'Failed to fetch user profile');
       }
-    } else {
+
       createdUser = userData;
+
+      // Give the trigger a moment if the row is not visible immediately.
+      if (!createdUser) {
+        for (let attempt = 0; attempt < 5; attempt++) {
+          await new Promise((resolve) => setTimeout(resolve, 300));
+
+          const { data: retryUser } = await supabase
+            .from('users')
+            .select('*')
+            .ilike('email', cleanEmail)
+            .maybeSingle();
+
+          if (retryUser) {
+            createdUser = retryUser;
+            break;
+          }
+        }
+      }
     }
 
-    // 3. If STUDENT, insert into 'students' table
+    // Email confirmation is enabled: Auth user exists but there is no session yet.
+    // The trigger has still created public.users. The user can log in after confirming.
+    if (!authData.session) {
+      return {
+        token: '',
+        user: {
+          user_id: 0,
+          name: cleanName,
+          email: cleanEmail,
+          role: role as any,
+          created_at: new Date().toISOString()
+        } as User,
+        student: undefined
+      };
+    }
+
+    if (!createdUser) {
+      throw new Error(
+        'Account created, but the user profile could not be loaded. Please try logging in.'
+      );
+    }
+
+    // 3. If STUDENT, create the student profile using the real user_id
+    // generated by public.users. This is NOT a users-table insert.
     let createdStudent: Student | undefined = undefined;
-    if (role === 'STUDENT' && createdUser) {
+
+    if (role === 'STUDENT') {
       const studentRes = await selectFromTable<Student>('students', 'student', async (tbl) => {
         return await supabase
           .from(tbl)
           .insert({
-            user_id: createdUser?.user_id,
+            user_id: createdUser!.user_id,
             name: cleanName,
             email: cleanEmail,
             roll_no: rollNo,
@@ -233,7 +255,7 @@ export const api = {
       });
 
       if (studentRes.error) {
-        // If already exists, fetch it
+        // If a student row already exists, fetch it instead.
         const fetchRes = await selectFromTable<Student>('students', 'student', async (tbl) => {
           return await supabase
             .from(tbl)
@@ -241,17 +263,18 @@ export const api = {
             .ilike('email', cleanEmail)
             .maybeSingle();
         });
+
         createdStudent = fetchRes.data || undefined;
       } else {
         createdStudent = studentRes.data || undefined;
       }
     }
 
-    const token = authData.session?.access_token || '';
+    const token = authData.session.access_token;
 
     return {
       token,
-      user: createdUser as User,
+      user: createdUser,
       student: createdStudent
     };
   },
@@ -271,22 +294,20 @@ export const api = {
 
     const cleanEmail = authUser.email.toLowerCase();
 
-    // Fetch user profile from Supabase
-    let { data: userProfile, error: userError } = await supabase
+    // Fetch the user profile created by the database trigger.
+    // Never use a fake user_id fallback and never create users here.
+    const { data: userProfile, error: userError } = await supabase
       .from('users')
       .select('*')
       .ilike('email', cleanEmail)
       .maybeSingle();
 
-    if (userError || !userProfile) {
-      const meta = authUser.user_metadata || {};
-      userProfile = {
-        user_id: 1,
-        name: meta.name || cleanEmail.split('@')[0],
-        email: cleanEmail,
-        role: (meta.role || 'STUDENT').toUpperCase() as any,
-        created_at: authUser.created_at
-      };
+    if (userError) {
+      handleSupabaseError(userError, 'Failed to fetch user profile');
+    }
+
+    if (!userProfile) {
+      throw new Error('User profile not found. Please contact support.');
     }
 
     // Fetch student profile if student
