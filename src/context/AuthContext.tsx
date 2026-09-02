@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { User, Student } from '../types';
 import { api } from '../services/api';
+import { supabase, isSupabaseConfigured, checkSupabaseConfig } from '../services/supabase';
 import { useToast } from './ToastContext';
 
 interface AuthContextType {
@@ -12,9 +13,10 @@ interface AuthContextType {
   isStudent: boolean;
   isAdmin: boolean;
   isLoading: boolean;
+  isSupabaseConfigured: boolean;
   login: (email: string, password: string) => Promise<User | null>;
   register: (data: { name: string; email: string; password: string; role?: string; roll_no?: string }) => Promise<User | null>;
-  logout: () => void;
+  logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
 }
 
@@ -23,36 +25,68 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [student, setStudent] = useState<Student | null>(null);
-  const [token, setToken] = useState<string | null>(() => localStorage.getItem('nexusexam_token'));
+  const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const toast = useToast();
 
   const refreshUser = useCallback(async () => {
-    const savedToken = localStorage.getItem('nexusexam_token');
-    if (!savedToken) {
+    const config = checkSupabaseConfig();
+    if (!config.valid) {
       setUser(null);
       setStudent(null);
+      setToken(null);
       setIsLoading(false);
       return;
     }
 
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        setUser(null);
+        setStudent(null);
+        setToken(null);
+        setIsLoading(false);
+        return;
+      }
+
+      setToken(session.access_token);
       const data = await api.getMe();
       setUser(data.user);
       setStudent(data.student || null);
-    } catch (err) {
-      console.warn('Session check failed, clearing token');
-      localStorage.removeItem('nexusexam_token');
-      setToken(null);
+    } catch (err: any) {
+      console.warn('[AuthContext] Session synchronization note:', err?.message);
       setUser(null);
       setStudent(null);
+      setToken(null);
     } finally {
       setIsLoading(false);
     }
   }, []);
 
+  // Listen to Supabase Auth state changes as the single source of truth
   useEffect(() => {
     refreshUser();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_IN' && session) {
+        setToken(session.access_token);
+        try {
+          const data = await api.getMe();
+          setUser(data.user);
+          setStudent(data.student || null);
+        } catch {}
+      } else if (event === 'SIGNED_OUT') {
+        setUser(null);
+        setStudent(null);
+        setToken(null);
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, [refreshUser]);
 
   const login = async (email: string, password: string): Promise<User | null> => {
@@ -60,21 +94,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsLoading(true);
       const cleanEmail = email.trim().toLowerCase();
       const data = await api.login(cleanEmail, password);
-      localStorage.setItem('nexusexam_token', data.token);
       setToken(data.token);
       setUser(data.user);
       setStudent(data.student || null);
       toast.success(`Welcome back, ${data.user.name}!`, 'Authentication Successful');
       return data.user;
     } catch (err: any) {
-      toast.error(err.message || 'Login failed. Please check your credentials.');
+      toast.error(err.message || 'Login failed. Please verify credentials in Supabase.');
       return null;
     } finally {
       setIsLoading(false);
     }
   };
 
-  const register = async (data: { name: string; email: string; password: string; role?: string; roll_no?: string }): Promise<User | null> => {
+  const register = async (data: {
+    name: string;
+    email: string;
+    password: string;
+    role?: string;
+    roll_no?: string;
+  }): Promise<User | null> => {
     try {
       setIsLoading(true);
       const res = await api.register({
@@ -82,22 +121,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         name: data.name.trim(),
         email: data.email.trim().toLowerCase()
       });
-      localStorage.setItem('nexusexam_token', res.token);
       setToken(res.token);
       setUser(res.user);
       setStudent(res.student || null);
       toast.success(`Account created successfully for ${res.user.name}!`, 'Registration Complete');
       return res.user;
     } catch (err: any) {
-      toast.error(err.message || 'Registration failed.');
+      toast.error(err.message || 'Registration failed in Supabase.');
       return null;
     } finally {
       setIsLoading(false);
     }
   };
 
-  const logout = () => {
-    localStorage.removeItem('nexusexam_token');
+  const logout = async () => {
+    try {
+      await supabase.auth.signOut();
+    } catch (err) {
+      console.warn('[Logout Error]', err);
+    }
     setToken(null);
     setUser(null);
     setStudent(null);
@@ -120,6 +162,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isStudent,
         isAdmin,
         isLoading,
+        isSupabaseConfigured,
         login,
         register,
         logout,

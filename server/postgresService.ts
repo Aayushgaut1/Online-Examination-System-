@@ -51,17 +51,20 @@ export class PostgresService {
     };
   }
 
-  public async createUser(name: string, email: string, passwordHash: string, role: string): Promise<UserRow> {
-    // 1. Ensure user in Supabase Auth
-    try {
-      await supabaseAdmin.auth.admin.createUser({
-        email: email.trim(),
-        password: 'password123',
-        email_confirm: true,
-        user_metadata: { name, role }
-      });
-    } catch (authErr) {
-      console.warn('[Supabase Auth Admin] Note on auth user creation:', authErr);
+  public async createUser(name: string, email: string, passwordHash: string, role: string, rawPassword?: string): Promise<UserRow> {
+    // 1. Ensure user in Supabase Auth if raw password is available (using standard anon key signUp)
+    if (rawPassword) {
+      try {
+        await supabaseAdmin.auth.signUp({
+          email: email.trim().toLowerCase(),
+          password: rawPassword,
+          options: {
+            data: { name: name.trim(), role: role.toUpperCase() }
+          }
+        });
+      } catch (authErr: any) {
+        console.warn('[Supabase Auth] Note on auth user signup:', authErr?.message);
+      }
     }
 
     // 2. Insert into users table

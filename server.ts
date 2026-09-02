@@ -1,5 +1,7 @@
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
+import 'dotenv/config';
 import { createServer as createViteServer } from 'vite';
 import { db } from './server/db.js';
 import { postgresAdapter } from './server/postgresAdapter.js';
@@ -62,6 +64,20 @@ async function startServer() {
     });
   });
 
+  // Safe client configuration endpoint (Supabase public anon key only)
+  app.get('/api/config', (req, res) => {
+    res.json({
+      supabaseUrl:
+        process.env.VITE_SUPABASE_URL ||
+        process.env.SUPABASE_URL ||
+        'https://jwnhapdvdsvwbyumtjun.supabase.co',
+      supabaseAnonKey:
+        process.env.VITE_SUPABASE_ANON_KEY ||
+        process.env.SUPABASE_ANON_KEY ||
+        '',
+    });
+  });
+
   // Mount API Sub-Routers
   app.use('/api/auth', authRoutes);
   app.use('/api/exams', examRoutes);
@@ -93,9 +109,33 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
+    app.use(express.static(distPath, { index: false }));
     app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+      const indexPath = path.join(distPath, 'index.html');
+      try {
+        if (fs.existsSync(indexPath)) {
+          let html = fs.readFileSync(indexPath, 'utf-8');
+          const envConfig = {
+            VITE_SUPABASE_URL:
+              process.env.VITE_SUPABASE_URL ||
+              process.env.SUPABASE_URL ||
+              'https://jwnhapdvdsvwbyumtjun.supabase.co',
+            VITE_SUPABASE_ANON_KEY:
+              process.env.VITE_SUPABASE_ANON_KEY ||
+              process.env.SUPABASE_ANON_KEY ||
+              '',
+          };
+          const scriptTag = `<script>window.__ENV__ = ${JSON.stringify(envConfig)};</script>`;
+          html = html.includes('</head>')
+            ? html.replace('</head>', `${scriptTag}</head>`)
+            : `${scriptTag}${html}`;
+          res.setHeader('Content-Type', 'text/html');
+          return res.send(html);
+        }
+      } catch (err) {
+        console.warn('[Server] Fallback serving index.html:', err);
+      }
+      res.sendFile(indexPath);
     });
   }
 

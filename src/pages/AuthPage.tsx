@@ -31,7 +31,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialTab = 'login', initia
   const [rollNo, setRollNo] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const { login, register } = useAuth();
+  const { login, register, isSupabaseConfigured } = useAuth();
   const toast = useToast();
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -108,6 +108,18 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialTab = 'login', initia
               : 'Enter your email to receive recovery instructions.'}
           </p>
         </div>
+
+        {!isSupabaseConfigured && (
+          <div className="mb-5 p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-2.5">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
+            <div>
+              <p className="font-semibold text-amber-200">Supabase API Key Required</p>
+              <p className="text-[11px] text-amber-300/80 mt-0.5 leading-relaxed">
+                To connect to your Supabase project (<span className="text-amber-200 font-mono">jwnhapdvdsvwbyumtjun</span>), configure <span className="text-amber-200 font-mono">VITE_SUPABASE_ANON_KEY</span> in your <span className="text-amber-200 font-mono">.env</span> file.
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Tab Toggle */}
         <div className="grid grid-cols-2 gap-1 bg-white/5 p-1 rounded-xl mb-6">

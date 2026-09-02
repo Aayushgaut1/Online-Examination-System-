@@ -1,35 +1,38 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-const supabaseUrl = process.env.SUPABASE_URL || 'https://jwnhapdvdsvwbyumtjun.supabase.co';
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || '';
-const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || '';
+const supabaseUrl =
+  process.env.VITE_SUPABASE_URL ||
+  process.env.SUPABASE_URL ||
+  'https://jwnhapdvdsvwbyumtjun.supabase.co';
 
-if (!supabaseServiceKey) {
-  console.warn('[Supabase Server] Warning: Neither SUPABASE_SERVICE_ROLE_KEY nor SUPABASE_ANON_KEY is provided.');
-}
+const supabaseKey =
+  process.env.VITE_SUPABASE_ANON_KEY ||
+  process.env.SUPABASE_ANON_KEY ||
+  '';
 
 export const isSupabaseConfigured = Boolean(
-  (process.env.SUPABASE_SERVICE_ROLE_KEY && process.env.SUPABASE_SERVICE_ROLE_KEY.trim().length > 0) ||
-  (process.env.SUPABASE_ANON_KEY && process.env.SUPABASE_ANON_KEY.trim().length > 0)
+  supabaseKey &&
+  supabaseKey.trim().length > 20 &&
+  !supabaseKey.includes('dummy')
 );
 
-const effectiveKey = (supabaseServiceKey || supabaseAnonKey) || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.dummy';
+if (!isSupabaseConfigured) {
+  console.warn('[Supabase Server] Notice: Supabase key (VITE_SUPABASE_ANON_KEY, SUPABASE_ANON_KEY, or SUPABASE_SERVICE_ROLE_KEY) is not set.');
+}
 
-// Server-side privileged administrative client for database operations,
-// grading, secure exam transactions, and user management
+const effectiveKey = isSupabaseConfigured
+  ? supabaseKey
+  : 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.dummy_server_key';
+
+// Server-side administrative / public client for database operations
 export const supabaseAdmin: SupabaseClient = createClient(supabaseUrl, effectiveKey, {
   auth: {
     persistSession: false,
-    autoRefreshToken: false
-  }
+    autoRefreshToken: false,
+  },
 });
 
-// Standard client with anon key
-export const supabasePublic: SupabaseClient = createClient(supabaseUrl, supabaseAnonKey || effectiveKey, {
-  auth: {
-    persistSession: false
-  }
-});
+export const supabasePublic: SupabaseClient = supabaseAdmin;
 
 export const SUPABASE_PROJECT_URL = supabaseUrl;
 export const SUPABASE_REF = 'jwnhapdvdsvwbyumtjun';

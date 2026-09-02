@@ -131,7 +131,7 @@ router.post('/register', async (req: Request, res: Response) => {
         return res.status(409).json({ error: 'An account with this email address already exists.' });
       }
 
-      newUser = await postgresService.createUser(name.trim(), cleanEmail, passwordHash, selectedRole);
+      newUser = await postgresService.createUser(name.trim(), cleanEmail, passwordHash, selectedRole, password);
 
       if (selectedRole === 'STUDENT') {
         const generatedRoll = roll_no && roll_no.trim()
