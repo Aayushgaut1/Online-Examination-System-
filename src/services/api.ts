@@ -396,7 +396,28 @@ export const api = {
   }
 
   return exams;
-}
+},
+
+  async getExamById(examId: number): Promise<Exam> {
+    const res = await selectFromTable<any>('exams', 'exam', async (tbl) => {
+      return await supabase
+        .from(tbl)
+        .select('*')
+        .eq('exam_id', examId)
+        .single();
+    });
+
+    if (res.error || !res.data) {
+      handleSupabaseError(res.error, `Exam #${examId} not found`);
+    }
+
+    return {
+      ...res.data,
+      is_published:
+        res.data.is_published === true ||
+        String(res.data.status || '').toUpperCase() === 'PUBLISHED',
+    } as Exam;
+  },
 
   // --------------------------------------------------------------------------
   // QUESTIONS & OPTIONS
