@@ -29,19 +29,20 @@ interface StudentDashboardProps {
 }
 
 export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onNavigate }) => {
-  const { user, student, isAuthenticated, switchQuickAccount } = useAuth();
+  const { user, student, isAuthenticated } = useAuth();
   const [stats, setStats] = useState<StudentDashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [startingExamId, setStartingExamId] = useState<number | null>(null);
   const toast = useToast();
 
   const fetchDashboardData = async () => {
+    const token = localStorage.getItem('nexusexam_token');
+    if (!token) {
+      setLoading(false);
+      return;
+    }
     try {
       setLoading(true);
-      // If not authenticated and no token, auto-activate Alex demo account for seamless preview
-      if (!isAuthenticated && !localStorage.getItem('nexusexam_token')) {
-        await switchQuickAccount('alex');
-      }
       const data = await api.getStudentDashboard();
       setStats(data);
     } catch (err: any) {
@@ -71,6 +72,38 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onNavigate }
       setStartingExamId(null);
     }
   };
+
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-[70vh] flex flex-col items-center justify-center px-4">
+        <div className="glass-panel max-w-md w-full p-8 rounded-3xl border border-white/10 text-center space-y-5">
+          <div className="w-12 h-12 rounded-2xl bg-cyan-500/20 text-cyan-400 flex items-center justify-center mx-auto border border-cyan-500/30">
+            <BookOpen className="w-6 h-6" />
+          </div>
+          <div className="space-y-2">
+            <h2 className="text-xl font-bold text-white font-['Outfit']">Student Portal Authentication</h2>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              Please sign in with your student account to access active examinations, view progress, and review scored attempts.
+            </p>
+          </div>
+          <div className="flex flex-col sm:flex-row gap-3 pt-2">
+            <button
+              onClick={() => onNavigate('auth', { tab: 'login', role: 'STUDENT' })}
+              className="flex-1 py-2.5 rounded-xl text-xs font-bold bg-cyan-600 hover:bg-cyan-500 text-white transition-colors cursor-pointer"
+            >
+              Sign In
+            </button>
+            <button
+              onClick={() => onNavigate('auth', { tab: 'register', role: 'STUDENT' })}
+              className="flex-1 py-2.5 rounded-xl text-xs font-semibold bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 transition-colors cursor-pointer"
+            >
+              Register as Student
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (loading && !stats) {
     return (

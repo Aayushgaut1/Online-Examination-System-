@@ -175,7 +175,8 @@ class DatabaseManager {
               password: password || '',
               database: database || 'online_exam_db',
               waitForConnections: true,
-              connectionLimit: 10
+              connectionLimit: 10,
+              connectTimeout: 2500
             });
         // Test connection
         const conn = await pool.getConnection();

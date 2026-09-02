@@ -12,11 +12,10 @@ interface AuthContextType {
   isStudent: boolean;
   isAdmin: boolean;
   isLoading: boolean;
-  login: (email: string, password: string) => Promise<boolean>;
-  register: (data: { name: string; email: string; password: string; role?: string; roll_no?: string }) => Promise<boolean>;
+  login: (email: string, password: string) => Promise<User | null>;
+  register: (data: { name: string; email: string; password: string; role?: string; roll_no?: string }) => Promise<User | null>;
   logout: () => void;
   refreshUser: () => Promise<void>;
-  switchQuickAccount: (accountKey: 'teacher' | 'aarav' | 'ananya' | 'rohan' | 'admin' | 'alex' | 'maya' | 'liam') => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -56,37 +55,42 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     refreshUser();
   }, [refreshUser]);
 
-  const login = async (email: string, password: string): Promise<boolean> => {
+  const login = async (email: string, password: string): Promise<User | null> => {
     try {
       setIsLoading(true);
-      const data = await api.login(email, password);
+      const cleanEmail = email.trim().toLowerCase();
+      const data = await api.login(cleanEmail, password);
       localStorage.setItem('nexusexam_token', data.token);
       setToken(data.token);
       setUser(data.user);
       setStudent(data.student || null);
       toast.success(`Welcome back, ${data.user.name}!`, 'Authentication Successful');
-      return true;
+      return data.user;
     } catch (err: any) {
       toast.error(err.message || 'Login failed. Please check your credentials.');
-      return false;
+      return null;
     } finally {
       setIsLoading(false);
     }
   };
 
-  const register = async (data: { name: string; email: string; password: string; role?: string; roll_no?: string }): Promise<boolean> => {
+  const register = async (data: { name: string; email: string; password: string; role?: string; roll_no?: string }): Promise<User | null> => {
     try {
       setIsLoading(true);
-      const res = await api.register(data);
+      const res = await api.register({
+        ...data,
+        name: data.name.trim(),
+        email: data.email.trim().toLowerCase()
+      });
       localStorage.setItem('nexusexam_token', res.token);
       setToken(res.token);
       setUser(res.user);
       setStudent(res.student || null);
-      toast.success(`Account created for ${res.user.name}!`, 'Registration Complete');
-      return true;
+      toast.success(`Account created successfully for ${res.user.name}!`, 'Registration Complete');
+      return res.user;
     } catch (err: any) {
       toast.error(err.message || 'Registration failed.');
-      return false;
+      return null;
     } finally {
       setIsLoading(false);
     }
@@ -98,25 +102,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(null);
     setStudent(null);
     toast.info('You have been logged out securely.', 'Session Ended');
-  };
-
-  const switchQuickAccount = async (accountKey: 'teacher' | 'aarav' | 'ananya' | 'rohan' | 'admin' | 'alex' | 'maya' | 'liam') => {
-    const credentials: Record<string, { email: string; password: string }> = {
-      teacher: { email: 'teacher@examverse.com', password: 'password123' },
-      aarav: { email: 'aarav@example.com', password: 'password123' },
-      ananya: { email: 'ananya@example.com', password: 'password123' },
-      rohan: { email: 'rohan@example.com', password: 'password123' },
-      admin: { email: 'admin@examverse.com', password: 'password123' },
-      // Aliases
-      alex: { email: 'aarav@example.com', password: 'password123' },
-      maya: { email: 'ananya@example.com', password: 'password123' },
-      liam: { email: 'rohan@example.com', password: 'password123' }
-    };
-
-    const target = credentials[accountKey];
-    if (target) {
-      await login(target.email, target.password);
-    }
   };
 
   const isTeacher = user?.role === 'TEACHER' || user?.role === 'ADMIN';
@@ -138,8 +123,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         login,
         register,
         logout,
-        refreshUser,
-        switchQuickAccount
+        refreshUser
       }}
     >
       {children}

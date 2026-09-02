@@ -29,7 +29,7 @@ interface LandingPageProps {
 }
 
 export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
-  const { switchQuickAccount, isAuthenticated, isTeacher } = useAuth();
+  const { isAuthenticated, isTeacher } = useAuth();
 
   const handleStartExam = () => {
     if (isAuthenticated) {
@@ -113,49 +113,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
               >
                 Login
               </motion.button>
-            </div>
-
-            {/* 1-Click Fast Demonstration Logins */}
-            <div className="pt-4 border-t border-white/10">
-              <p className="text-xs font-mono text-slate-400 mb-2">⚡ Instant One-Click Demo Logins:</p>
-              <div className="flex flex-wrap gap-2">
-                <motion.button
-                  whileHover={{ scale: 1.03, y: -1 }}
-                  whileTap={{ scale: 0.97 }}
-                  onClick={async () => {
-                    const ok = await switchQuickAccount('teacher');
-                    if (ok) onNavigate('teacher-dashboard');
-                  }}
-                  className="px-3 py-1.5 rounded-lg bg-indigo-950/80 border border-indigo-500/40 text-indigo-200 text-xs font-semibold hover:bg-indigo-900 transition-colors flex items-center gap-1.5 cursor-pointer shadow-md"
-                >
-                  <GraduationCap className="w-3.5 h-3.5 text-indigo-400" />
-                  Dr. Sarah (Teacher)
-                </motion.button>
-                <motion.button
-                  whileHover={{ scale: 1.03, y: -1 }}
-                  whileTap={{ scale: 0.97 }}
-                  onClick={async () => {
-                    const ok = await switchQuickAccount('alex');
-                    if (ok) onNavigate('student-dashboard');
-                  }}
-                  className="px-3 py-1.5 rounded-lg bg-cyan-950/80 border border-cyan-500/40 text-cyan-200 text-xs font-semibold hover:bg-cyan-900 transition-colors flex items-center gap-1.5 cursor-pointer shadow-md"
-                >
-                  <Users className="w-3.5 h-3.5 text-cyan-400" />
-                  Alex Turner (Student)
-                </motion.button>
-                <motion.button
-                  whileHover={{ scale: 1.03, y: -1 }}
-                  whileTap={{ scale: 0.97 }}
-                  onClick={async () => {
-                    const ok = await switchQuickAccount('maya');
-                    if (ok) onNavigate('student-dashboard');
-                  }}
-                  className="px-3 py-1.5 rounded-lg bg-emerald-950/80 border border-emerald-500/40 text-emerald-200 text-xs font-semibold hover:bg-emerald-900 transition-colors flex items-center gap-1.5 cursor-pointer shadow-md"
-                >
-                  <Users className="w-3.5 h-3.5 text-emerald-400" />
-                  Maya Patel (Student)
-                </motion.button>
-              </div>
             </div>
           </motion.div>
 
@@ -339,9 +296,14 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
                 <motion.button
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
-                  onClick={async () => {
-                    await switchQuickAccount('teacher');
-                    onNavigate('teacher-dashboard');
+                  onClick={() => {
+                    if (isAuthenticated && isTeacher) {
+                      onNavigate('teacher-dashboard');
+                    } else if (isAuthenticated) {
+                      onNavigate('teacher-dashboard');
+                    } else {
+                      onNavigate('auth', { tab: 'login', role: 'TEACHER' });
+                    }
                   }}
                   className="w-full py-3 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-indigo-600/30"
                 >
@@ -384,9 +346,12 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
                 <motion.button
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
-                  onClick={async () => {
-                    await switchQuickAccount('alex');
-                    onNavigate('student-dashboard');
+                  onClick={() => {
+                    if (isAuthenticated) {
+                      onNavigate('student-dashboard');
+                    } else {
+                      onNavigate('auth', { tab: 'login', role: 'STUDENT' });
+                    }
                   }}
                   className="w-full py-3 rounded-xl text-xs font-bold bg-cyan-600 hover:bg-cyan-500 text-white transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-cyan-600/30"
                 >

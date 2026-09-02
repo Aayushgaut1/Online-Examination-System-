@@ -55,7 +55,11 @@ function AppContent() {
         {currentView === 'landing' && <LandingPage onNavigate={handleNavigate} />}
 
         {currentView === 'auth' && (
-          <AuthPage initialTab={viewParams?.tab || 'login'} onNavigate={handleNavigate} />
+          <AuthPage
+            initialTab={viewParams?.tab || 'login'}
+            initialRole={viewParams?.role || 'STUDENT'}
+            onNavigate={handleNavigate}
+          />
         )}
 
         {currentView === 'student-dashboard' && (

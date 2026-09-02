@@ -16,12 +16,13 @@ import { useToast } from '../context/ToastContext';
 
 interface AuthPageProps {
   initialTab?: 'login' | 'register' | 'forgot';
+  initialRole?: 'STUDENT' | 'TEACHER';
   onNavigate: (view: string, params?: any) => void;
 }
 
-export const AuthPage: React.FC<AuthPageProps> = ({ initialTab = 'login', onNavigate }) => {
+export const AuthPage: React.FC<AuthPageProps> = ({ initialTab = 'login', initialRole = 'STUDENT', onNavigate }) => {
   const [tab, setTab] = useState<'login' | 'register' | 'forgot'>(initialTab);
-  const [role, setRole] = useState<'STUDENT' | 'TEACHER'>('STUDENT');
+  const [role, setRole] = useState<'STUDENT' | 'TEACHER'>(initialRole);
 
   // Form states
   const [email, setEmail] = useState('');
@@ -30,7 +31,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialTab = 'login', onNavi
   const [rollNo, setRollNo] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const { login, register, switchQuickAccount } = useAuth();
+  const { login, register } = useAuth();
   const toast = useToast();
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -41,12 +42,11 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialTab = 'login', onNavi
     }
 
     setLoading(true);
-    const success = await login(email, password);
+    const loggedUser = await login(email, password);
     setLoading(false);
 
-    if (success) {
-      // Check email to redirect appropriately
-      if (email.includes('teacher') || email.includes('admin')) {
+    if (loggedUser) {
+      if (loggedUser.role === 'TEACHER' || loggedUser.role === 'ADMIN') {
         onNavigate('teacher-dashboard');
       } else {
         onNavigate('student-dashboard');
@@ -67,7 +67,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialTab = 'login', onNavi
     }
 
     setLoading(true);
-    const success = await register({
+    const loggedUser = await register({
       name,
       email,
       password,
@@ -76,21 +76,12 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialTab = 'login', onNavi
     });
     setLoading(false);
 
-    if (success) {
-      if (role === 'TEACHER') {
+    if (loggedUser) {
+      if (loggedUser.role === 'TEACHER' || loggedUser.role === 'ADMIN') {
         onNavigate('teacher-dashboard');
       } else {
         onNavigate('student-dashboard');
       }
-    }
-  };
-
-  const handleQuickLogin = async (accountKey: 'teacher' | 'aarav' | 'ananya' | 'rohan') => {
-    await switchQuickAccount(accountKey);
-    if (accountKey === 'teacher') {
-      onNavigate('teacher-dashboard');
-    } else {
-      onNavigate('student-dashboard');
     }
   };
 
@@ -113,7 +104,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialTab = 'login', onNavi
             {tab === 'login'
               ? 'Access your examinations, question bank, and real-time results.'
               : tab === 'register'
-              ? 'Register with Supabase PostgreSQL authentication.'
+              ? 'Create your account to access examination portals and records.'
               : 'Enter your email to receive recovery instructions.'}
           </p>
         </div>
@@ -138,42 +129,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialTab = 'login', onNavi
           >
             Register
           </button>
-        </div>
-
-        {/* 1-Click Fast Demonstration Fillers */}
-        <div className="mb-6 p-3 rounded-xl bg-indigo-950/40 border border-indigo-500/20">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-[11px] font-mono text-indigo-300 font-semibold">⚡ Supabase Database Accounts:</p>
-            <span className="text-[9px] font-mono bg-emerald-950/80 text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-500/30">
-              PostgreSQL
-            </span>
-          </div>
-          <div className="grid grid-cols-3 gap-1.5 text-[10px]">
-            <button
-              type="button"
-              onClick={() => handleQuickLogin('teacher')}
-              className="px-2 py-1.5 rounded-lg bg-indigo-900/60 hover:bg-indigo-800 text-indigo-200 font-bold text-center border border-indigo-500/30 transition-colors"
-              title="Dr. Priya Sharma (TEACHER)"
-            >
-              Dr. Priya (Teacher)
-            </button>
-            <button
-              type="button"
-              onClick={() => handleQuickLogin('aarav')}
-              className="px-2 py-1.5 rounded-lg bg-cyan-900/60 hover:bg-cyan-800 text-cyan-200 font-bold text-center border border-cyan-500/30 transition-colors"
-              title="Aarav Kumar (STUDENT - CSE2026-001)"
-            >
-              Aarav (Student)
-            </button>
-            <button
-              type="button"
-              onClick={() => handleQuickLogin('ananya')}
-              className="px-2 py-1.5 rounded-lg bg-emerald-900/60 hover:bg-emerald-800 text-emerald-200 font-bold text-center border border-emerald-500/30 transition-colors"
-              title="Ananya Singh (STUDENT - CSE2026-002)"
-            >
-              Ananya (Student)
-            </button>
-          </div>
         </div>
 
         {/* LOGIN FORM */}
@@ -221,10 +176,10 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialTab = 'login', onNavi
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3 rounded-xl text-xs font-bold bg-gradient-to-r from-indigo-600 to-indigo-500 text-white shadow-lg shadow-indigo-600/30 hover:from-indigo-500 hover:to-indigo-400 transition-all flex items-center justify-center gap-2 btn-3d disabled:opacity-50"
+              className="w-full py-3 rounded-xl text-xs font-bold bg-gradient-to-r from-indigo-600 to-indigo-500 text-white shadow-lg shadow-indigo-600/30 hover:from-indigo-500 hover:to-indigo-400 transition-all flex items-center justify-center gap-2 btn-3d disabled:opacity-50 cursor-pointer"
             >
               {loading ? (
-                <span>Authenticating with Supabase PostgreSQL...</span>
+                <span>Signing in...</span>
               ) : (
                 <>
                   <span>Sign In</span>
@@ -334,10 +289,10 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialTab = 'login', onNavi
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3 rounded-xl text-xs font-bold bg-gradient-to-r from-indigo-600 to-indigo-500 text-white shadow-lg shadow-indigo-600/30 hover:from-indigo-500 hover:to-indigo-400 transition-all flex items-center justify-center gap-2 btn-3d disabled:opacity-50"
+              className="w-full py-3 rounded-xl text-xs font-bold bg-gradient-to-r from-indigo-600 to-indigo-500 text-white shadow-lg shadow-indigo-600/30 hover:from-indigo-500 hover:to-indigo-400 transition-all flex items-center justify-center gap-2 btn-3d disabled:opacity-50 cursor-pointer"
             >
               {loading ? (
-                <span>Registering Account...</span>
+                <span>Creating Account...</span>
               ) : (
                 <>
                   <span>Create {role === 'STUDENT' ? 'Student' : 'Faculty'} Account</span>

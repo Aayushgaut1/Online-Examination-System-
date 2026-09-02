@@ -31,7 +31,10 @@ export const StudentAnalyticsPage: React.FC<StudentAnalyticsPageProps> = ({ onNa
 
   useEffect(() => {
     const fetchAnalytics = async () => {
-      if (!student) return;
+      if (!student) {
+        setLoading(false);
+        return;
+      }
       try {
         setLoading(true);
         const data = await api.getStudentResults(student.student_id);
@@ -51,6 +54,30 @@ export const StudentAnalyticsPage: React.FC<StudentAnalyticsPageProps> = ({ onNa
       <div className="min-h-[70vh] flex flex-col items-center justify-center gap-3">
         <div className="w-10 h-10 border-4 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin" />
         <p className="text-xs text-slate-400 font-mono">Computing score distributions & longitudinal metrics...</p>
+      </div>
+    );
+  }
+
+  if (!student) {
+    return (
+      <div className="min-h-[70vh] flex flex-col items-center justify-center px-4">
+        <div className="glass-panel max-w-md w-full p-8 rounded-3xl border border-white/10 text-center space-y-5">
+          <div className="w-12 h-12 rounded-2xl bg-cyan-500/20 text-cyan-400 flex items-center justify-center mx-auto border border-cyan-500/30">
+            <BarChart3 className="w-6 h-6" />
+          </div>
+          <div className="space-y-2">
+            <h2 className="text-xl font-bold text-white font-['Outfit']">Student Analytics</h2>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              Please sign in with your student account to view your historical scores, exam breakdown, and longitudinal performance.
+            </p>
+          </div>
+          <button
+            onClick={() => onNavigate('auth', { tab: 'login', role: 'STUDENT' })}
+            className="w-full py-2.5 rounded-xl text-xs font-bold bg-cyan-600 hover:bg-cyan-500 text-white transition-colors cursor-pointer"
+          >
+            Sign In to View Performance
+          </button>
+        </div>
       </div>
     );
   }

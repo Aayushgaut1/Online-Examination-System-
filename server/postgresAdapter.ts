@@ -1,4 +1,4 @@
-import { supabaseAdmin, SUPABASE_PROJECT_URL, SUPABASE_REF } from './supabaseClient.js';
+import { supabaseAdmin, SUPABASE_PROJECT_URL, SUPABASE_REF, isSupabaseConfigured } from './supabaseClient.js';
 
 export interface TableColumn {
   column_name: string;
@@ -49,11 +49,25 @@ export class PostgresAdapter {
   };
 
   public async init(): Promise<boolean> {
+    if (!isSupabaseConfigured) {
+      this.isConnected = false;
+      this.connectionType = 'NONE';
+      this.lastError = null;
+      console.log('[DB] No external Supabase keys configured, using built-in persistent relational engine.');
+      return false;
+    }
+
     try {
-      // Test Supabase connectivity by querying users count
-      const { count, error } = await supabaseAdmin
+      // Test Supabase connectivity with a 2.5s timeout guard to prevent startup stalls
+      const timeoutPromise = new Promise<{ count: null; error: { message: string } }>((resolve) => {
+        setTimeout(() => resolve({ count: null, error: { message: 'Connection timed out' } }), 2500);
+      });
+
+      const queryPromise = supabaseAdmin
         .from('users')
         .select('*', { count: 'exact', head: true });
+
+      const { count, error } = await Promise.race([queryPromise, timeoutPromise]);
 
       if (error) {
         this.isConnected = false;

@@ -15,16 +15,22 @@ router.post('/login', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Email and password are required.' });
     }
 
+    const cleanEmail = email.trim().toLowerCase();
     let user: UserRow | null = null;
     let student: StudentRow | null = null;
 
     if (postgresAdapter.isConnected) {
-      user = await postgresService.findUserByEmail(email);
+      user = await postgresService.findUserByEmail(cleanEmail);
       if (!user) {
         return res.status(401).json({ error: 'Invalid email or password credentials.' });
       }
 
-      let isValid = await verifyPassword(password, user.password_hash);
+      let isValid = false;
+      try {
+        isValid = await verifyPassword(password, user.password_hash);
+      } catch (e) {
+        isValid = false;
+      }
       if (!isValid && user.password_hash === password) {
         // Support pre-populated plain passwords in test databases
         isValid = true;
@@ -45,12 +51,20 @@ router.post('/login', async (req: Request, res: Response) => {
         }
       }
     } else {
-      user = db.users.find(u => u.email.toLowerCase() === email.trim().toLowerCase()) || null;
+      user = db.users.find(u => u.email.toLowerCase() === cleanEmail) || null;
       if (!user) {
         return res.status(401).json({ error: 'Invalid email or password credentials.' });
       }
 
-      const isValid = await verifyPassword(password, user.password_hash);
+      let isValid = false;
+      try {
+        isValid = await verifyPassword(password, user.password_hash);
+      } catch (e) {
+        isValid = false;
+      }
+      if (!isValid && user.password_hash === password) {
+        isValid = true;
+      }
       if (!isValid) {
         return res.status(401).json({ error: 'Invalid email or password credentials.' });
       }

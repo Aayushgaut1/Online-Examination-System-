@@ -33,7 +33,7 @@ interface TeacherDashboardProps {
 }
 
 export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onNavigate }) => {
-  const { user, isTeacher, switchQuickAccount } = useAuth();
+  const { user, isTeacher, isAuthenticated } = useAuth();
   const [stats, setStats] = useState<TeacherDashboardStats | null>(null);
   const [exams, setExams] = useState<Exam[]>([]);
   const [students, setStudents] = useState<any[]>([]);
@@ -67,11 +67,13 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onNavigate }
   const toast = useToast();
 
   const loadData = async () => {
+    const token = localStorage.getItem('nexusexam_token');
+    if (!token || !isTeacher) {
+      setLoading(false);
+      return;
+    }
     try {
       setLoading(true);
-      if (!isTeacher && !localStorage.getItem('nexusexam_token')) {
-        await switchQuickAccount('teacher');
-      }
       const [dashData, examsList, studentsList] = await Promise.all([
         api.getTeacherDashboard(),
         api.getExams(),
@@ -92,7 +94,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onNavigate }
 
   useEffect(() => {
     loadData();
-  }, [isTeacher]);
+  }, [isTeacher, isAuthenticated]);
 
   // Fetch questions when selectedExamId changes in questions tab
   useEffect(() => {
@@ -207,6 +209,70 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onNavigate }
       setLoadingStudentDetail(false);
     }
   };
+
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-[70vh] flex flex-col items-center justify-center px-4">
+        <div className="glass-panel max-w-md w-full p-8 rounded-3xl border border-white/10 text-center space-y-5">
+          <div className="w-12 h-12 rounded-2xl bg-indigo-600/20 text-indigo-400 flex items-center justify-center mx-auto border border-indigo-500/30">
+            <GraduationCap className="w-6 h-6" />
+          </div>
+          <div className="space-y-2">
+            <h2 className="text-xl font-bold text-white font-['Outfit']">Faculty Authentication Required</h2>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              Please sign in with a Teacher account to manage question banks, publish exams, and inspect student performance.
+            </p>
+          </div>
+          <div className="flex flex-col sm:flex-row gap-3 pt-2">
+            <button
+              onClick={() => onNavigate('auth', { tab: 'login', role: 'TEACHER' })}
+              className="flex-1 py-2.5 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white transition-colors cursor-pointer"
+            >
+              Sign In
+            </button>
+            <button
+              onClick={() => onNavigate('auth', { tab: 'register', role: 'TEACHER' })}
+              className="flex-1 py-2.5 rounded-xl text-xs font-semibold bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 transition-colors cursor-pointer"
+            >
+              Register as Faculty
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (isAuthenticated && !isTeacher) {
+    return (
+      <div className="min-h-[70vh] flex flex-col items-center justify-center px-4">
+        <div className="glass-panel max-w-md w-full p-8 rounded-3xl border border-white/10 text-center space-y-5">
+          <div className="w-12 h-12 rounded-2xl bg-amber-500/20 text-amber-400 flex items-center justify-center mx-auto border border-amber-500/30">
+            <GraduationCap className="w-6 h-6" />
+          </div>
+          <div className="space-y-2">
+            <h2 className="text-xl font-bold text-white font-['Outfit']">Faculty Access Restricted</h2>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              You are currently signed in as <span className="text-white font-semibold">{user?.name}</span> (Student). The Faculty Dashboard requires a Teacher account.
+            </p>
+          </div>
+          <div className="flex flex-col sm:flex-row gap-3 pt-2">
+            <button
+              onClick={() => onNavigate('student-dashboard')}
+              className="flex-1 py-2.5 rounded-xl text-xs font-bold bg-cyan-600 hover:bg-cyan-500 text-white transition-colors cursor-pointer"
+            >
+              Go to Student Portal
+            </button>
+            <button
+              onClick={() => onNavigate('auth', { tab: 'login', role: 'TEACHER' })}
+              className="flex-1 py-2.5 rounded-xl text-xs font-semibold bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 transition-colors cursor-pointer"
+            >
+              Switch Account
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (loading && !stats) {
     return (

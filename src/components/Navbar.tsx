@@ -25,7 +25,7 @@ interface NavbarProps {
 }
 
 export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate }) => {
-  const { user, student, isAuthenticated, isTeacher, isStudent, logout, switchQuickAccount } = useAuth();
+  const { user, student, isAuthenticated, isTeacher, isStudent, logout } = useAuth();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [dbModalOpen, setDbModalOpen] = useState(false);
@@ -127,31 +127,6 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate }) => {
 
           {/* Right Action & Profile Area */}
           <div className="flex items-center gap-3">
-            {/* Quick Demo Account Selector (Helpful for Evaluation) */}
-            <div className="hidden xl:flex items-center gap-1.5 bg-slate-900 border border-white/10 px-2.5 py-1 rounded-lg text-[11px]">
-              <span className="text-slate-400 font-medium">Quick Demo:</span>
-              <button
-                onClick={async () => {
-                  await switchQuickAccount('teacher');
-                  onNavigate('teacher-dashboard');
-                }}
-                className="px-2.5 py-1 rounded bg-indigo-950/80 text-indigo-300 hover:bg-indigo-900 transition-colors font-semibold cursor-pointer border border-indigo-500/30"
-                title="Dr. Priya Sharma (teacher@examverse.com)"
-              >
-                Dr. Priya (Teacher)
-              </button>
-              <button
-                onClick={async () => {
-                  await switchQuickAccount('aarav');
-                  onNavigate('student-dashboard');
-                }}
-                className="px-2.5 py-1 rounded bg-cyan-950/80 text-cyan-300 hover:bg-cyan-900 transition-colors font-semibold cursor-pointer border border-cyan-500/30"
-                title="Aarav Kumar (aarav@example.com)"
-              >
-                Aarav (Student)
-              </button>
-            </div>
-
             {!isAuthenticated ? (
               <div className="flex items-center gap-2">
                 <button

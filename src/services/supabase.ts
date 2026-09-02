@@ -7,7 +7,10 @@ if (!supabaseAnonKey) {
   console.warn('[NexusExam Supabase] VITE_SUPABASE_ANON_KEY is not configured in client environment.');
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export const isSupabaseConfigured = Boolean(supabaseAnonKey && supabaseAnonKey.trim().length > 0);
+const effectiveAnonKey = supabaseAnonKey || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.dummy';
+
+export const supabase = createClient(supabaseUrl, effectiveAnonKey);
 
 export const SUPABASE_PROJECT_URL = supabaseUrl;
 export const SUPABASE_PROJECT_REF = 'jwnhapdvdsvwbyumtjun';
