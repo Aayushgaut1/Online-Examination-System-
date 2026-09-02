@@ -1216,7 +1216,9 @@ export const api = {
     }
 
     const student = me.student;
-    const availableExams = (await this.getExams()).filter((e) => e.is_published);
+   const availableExams = (await this.getExams()).filter(
+  (e) => e.status === 'PUBLISHED'
+);
     const recentResults = await this.getStudentResults(student.student_id);
 
     // Annotate exams with student's attempt status
