@@ -1,5 +1,7 @@
 import { Router, Response } from 'express';
 import { db } from '../db.js';
+import { postgresAdapter } from '../postgresAdapter.js';
+import { postgresService } from '../postgresService.js';
 import { authenticateToken, requireRole, AuthRequest } from '../auth.js';
 
 const router = Router();
@@ -10,6 +12,29 @@ router.get('/student', authenticateToken, requireRole(['STUDENT']), async (req: 
     const studentId = req.user!.student_id;
     if (!studentId) {
       return res.status(400).json({ error: 'Student profile not associated with user.' });
+    }
+
+    if (postgresAdapter.isConnected) {
+      const stats = await postgresService.getStudentDashboardStats(studentId);
+      if (!stats || !stats.student) {
+        return res.status(404).json({ error: 'Student not found.' });
+      }
+
+      const availableExams = await postgresService.listExams(false, studentId);
+      const studentResults = await postgresService.getResultsForStudent(studentId);
+
+      return res.json({
+        student: stats.student,
+        total_attempts: stats.total_attempts,
+        completed_exams: stats.completed_exams,
+        average_score: stats.average_score,
+        average_percentage: stats.average_percentage,
+        pass_count: stats.pass_count,
+        fail_count: stats.fail_count,
+        pass_rate: stats.pass_rate,
+        recent_results: studentResults.slice(0, 5),
+        available_exams: availableExams
+      });
     }
 
     const student = db.students.find(s => s.student_id === studentId);
@@ -95,6 +120,15 @@ router.get('/student', authenticateToken, requireRole(['STUDENT']), async (req: 
 // GET /api/dashboard/teacher - Comprehensive faculty analytics
 router.get('/teacher', authenticateToken, requireRole(['TEACHER', 'ADMIN']), async (req: AuthRequest, res: Response) => {
   try {
+    if (postgresAdapter.isConnected) {
+      const stats = await postgresService.getTeacherDashboardStats();
+      const students = await postgresService.listStudents();
+      return res.json({
+        ...stats,
+        total_students: students.length
+      });
+    }
+
     const totalExams = db.exams.length;
     const totalStudents = db.students.length;
     const totalAttempts = db.attempts.length;
@@ -182,6 +216,33 @@ router.get('/teacher', authenticateToken, requireRole(['TEACHER', 'ADMIN']), asy
 // GET /api/database/status - Database health & schema inspector
 router.get('/database/status', async (req: AuthRequest, res: Response) => {
   try {
+    if (postgresAdapter.isConnected) {
+      const inspection = await postgresAdapter.inspectSchema();
+      const tableCounts: Record<string, number> = {};
+      const schemaTables = Object.entries(inspection.tables).map(([entity, info]) => {
+        tableCounts[entity] = info.row_count;
+        return {
+          name: info.actual_table_name,
+          entity: entity,
+          rows: info.row_count,
+          columns: info.columns
+        };
+      });
+
+      return res.json({
+        status: 'ONLINE',
+        engine: `PostgreSQL (${postgresAdapter.connectionType === 'SUPABASE' ? 'Supabase' : 'Direct Cloud Instance'})`,
+        is_postgres: true,
+        is_supabase: postgresAdapter.connectionType === 'SUPABASE',
+        table_counts: tableCounts,
+        database_name: postgresAdapter.connectionType === 'SUPABASE' ? 'Supabase (jwnhapdvdsvwbyumtjun)' : (process.env.PGDATABASE || 'postgres'),
+        supabase_project_ref: 'jwnhapdvdsvwbyumtjun',
+        supabase_url: 'https://jwnhapdvdsvwbyumtjun.supabase.co',
+        schema_tables: schemaTables,
+        table_mapping: postgresAdapter.tableMap
+      });
+    }
+
     const tableCounts = {
       users: db.users.length,
       student: db.students.length,
@@ -197,6 +258,7 @@ router.get('/database/status', async (req: AuthRequest, res: Response) => {
       status: 'ONLINE',
       engine: db.isUsingMySQL ? 'MySQL (External Server Pool)' : 'Persistent Relational SQL Engine (ACID JSON Storage)',
       is_mysql: db.isUsingMySQL,
+      is_postgres: false,
       table_counts: tableCounts,
       database_name: 'online_exam_db',
       schema_tables: [
@@ -218,6 +280,11 @@ router.get('/database/status', async (req: AuthRequest, res: Response) => {
 // POST /api/database/seed-reset - Reset and re-seed database
 router.post('/database/seed-reset', async (req: AuthRequest, res: Response) => {
   try {
+    if (postgresAdapter.isConnected) {
+      return res.status(400).json({
+        error: 'Database reset disabled for production PostgreSQL/Supabase database to preserve existing tables.'
+      });
+    }
     await db.seedDatabase(true);
     return res.json({ message: 'Database reset and re-seeded successfully.' });
   } catch (err: any) {
@@ -225,4 +292,21 @@ router.post('/database/seed-reset', async (req: AuthRequest, res: Response) => {
   }
 });
 
+// POST /api/database/recreate - Create a brand new clean database
+router.post('/database/recreate', async (req: AuthRequest, res: Response) => {
+  try {
+    if (postgresAdapter.isConnected) {
+      return res.status(400).json({
+        error: 'Database recreation disabled for production PostgreSQL/Supabase database.'
+      });
+    }
+    await db.clearDatabase();
+    await db.seedDatabase(true);
+    return res.json({ message: 'Brand new database created and initialized successfully.' });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Failed to recreate database.' });
+  }
+});
+
 export default router;
+

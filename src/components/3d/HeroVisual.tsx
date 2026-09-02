@@ -145,7 +145,7 @@ export const HeroVisual: React.FC = () => {
           <div className="pt-4 border-t border-white/10 flex items-center justify-between text-xs" style={{ transform: 'translateZ(15px)' }}>
             <div className="flex items-center gap-2 text-emerald-400 font-medium">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
-              <span>Real-time Autosave to MySQL Active</span>
+              <span>Real-time Autosave to Supabase Active</span>
             </div>
             <div className="flex items-center gap-1.5 font-mono text-slate-400">
               Progress: <span className="text-white font-bold">15%</span>

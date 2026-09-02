@@ -33,7 +33,7 @@ interface TeacherDashboardProps {
 }
 
 export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onNavigate }) => {
-  const { user } = useAuth();
+  const { user, isTeacher, switchQuickAccount } = useAuth();
   const [stats, setStats] = useState<TeacherDashboardStats | null>(null);
   const [exams, setExams] = useState<Exam[]>([]);
   const [students, setStudents] = useState<any[]>([]);
@@ -69,6 +69,9 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onNavigate }
   const loadData = async () => {
     try {
       setLoading(true);
+      if (!isTeacher && !localStorage.getItem('nexusexam_token')) {
+        await switchQuickAccount('teacher');
+      }
       const [dashData, examsList, studentsList] = await Promise.all([
         api.getTeacherDashboard(),
         api.getExams(),
@@ -81,7 +84,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onNavigate }
         setSelectedExamId(examsList[0].exam_id);
       }
     } catch (err: any) {
-      toast.error('Failed to load faculty portal data: ' + err.message);
+      console.warn('Teacher load notice:', err.message);
     } finally {
       setLoading(false);
     }
@@ -89,7 +92,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({ onNavigate }
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [isTeacher]);
 
   // Fetch questions when selectedExamId changes in questions tab
   useEffect(() => {

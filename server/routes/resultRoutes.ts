@@ -1,5 +1,7 @@
 import { Router, Response } from 'express';
 import { db } from '../db.js';
+import { postgresAdapter } from '../postgresAdapter.js';
+import { postgresService } from '../postgresService.js';
 import { authenticateToken, requireRole, AuthRequest } from '../auth.js';
 
 const router = Router();
@@ -8,8 +10,83 @@ const router = Router();
 router.get('/:id', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const resultId = Number(req.params.id);
-    const result = db.results.find(r => r.result_id === resultId);
 
+    if (postgresAdapter.isConnected) {
+      const result = await postgresService.getResultById(resultId);
+      if (!result) {
+        return res.status(404).json({ error: 'Result record not found.' });
+      }
+
+      const attempt = await postgresService.getAttemptById(result.attempt_id);
+      if (!attempt) {
+        return res.status(404).json({ error: 'Associated exam attempt not found.' });
+      }
+
+      const isTeacher = req.user?.role === 'TEACHER' || req.user?.role === 'ADMIN';
+      const isOwner = attempt.student_id === req.user?.student_id;
+      if (!isTeacher && !isOwner) {
+        return res.status(403).json({ error: 'Access denied to this result.' });
+      }
+
+      const exam = await postgresService.getExamById(attempt.exam_id, true);
+      const student = await postgresService.findStudentById(attempt.student_id);
+      if (!exam || !student) {
+        return res.status(404).json({ error: 'Exam or student profile not found.' });
+      }
+
+      const questions = exam.questions || [];
+      const answers = await postgresService.getAnswersForAttempt(attempt.attempt_id);
+
+      const analysis = questions.map((q: any) => {
+        const qOptions = q.options || [];
+        const studentAnswer = answers.find(a => a.question_id === q.question_id);
+        const correctOption = qOptions.find((o: any) => o.is_correct);
+        const selectedOption = studentAnswer && studentAnswer.selected_option_id
+          ? qOptions.find((o: any) => o.option_id === studentAnswer.selected_option_id)
+          : null;
+
+        const isCorrect = Boolean(selectedOption && correctOption && selectedOption.option_id === correctOption.option_id);
+        const marksObtained = isCorrect ? q.marks : 0;
+
+        return {
+          question_id: q.question_id,
+          question_text: q.question_text,
+          marks: q.marks,
+          selected_option_id: selectedOption ? selectedOption.option_id : null,
+          selected_option_text: selectedOption ? selectedOption.option_text : null,
+          correct_option_id: correctOption ? correctOption.option_id : 0,
+          correct_option_text: correctOption ? correctOption.option_text : 'N/A',
+          is_correct: isCorrect,
+          marks_obtained: marksObtained,
+          is_marked_for_review: studentAnswer ? studentAnswer.is_marked_for_review : false,
+          options: qOptions.map((o: any) => ({
+            option_id: o.option_id,
+            question_id: o.question_id,
+            option_text: o.option_text,
+            is_correct: o.is_correct
+          }))
+        };
+      });
+
+      return res.json({
+        result: {
+          ...result,
+          exam_id: exam.exam_id,
+          exam_title: exam.title,
+          total_marks: exam.total_marks,
+          passing_percentage: exam.passing_percentage,
+          student_id: student.student_id,
+          student_name: student.name,
+          student_roll_no: student.roll_no
+        },
+        attempt,
+        exam,
+        student,
+        analysis
+      });
+    }
+
+    const result = db.results.find(r => r.result_id === resultId);
     if (!result) {
       return res.status(404).json({ error: 'Result record not found.' });
     }
@@ -104,6 +181,11 @@ router.get('/students/:studentId/results', authenticateToken, async (req: AuthRe
       return res.status(403).json({ error: 'Access denied.' });
     }
 
+    if (postgresAdapter.isConnected) {
+      const results = await postgresService.getResultsForStudent(studentId);
+      return res.json(results);
+    }
+
     const studentAttempts = db.attempts.filter(a => a.student_id === studentId);
     const studentAttemptIds = studentAttempts.map(a => a.attempt_id);
     const studentResults = db.results.filter(r => studentAttemptIds.includes(r.attempt_id));
@@ -131,8 +213,16 @@ router.get('/students/:studentId/results', authenticateToken, async (req: AuthRe
 router.get('/exams/:examId/results', authenticateToken, requireRole(['TEACHER', 'ADMIN']), async (req: AuthRequest, res: Response) => {
   try {
     const examId = Number(req.params.examId);
-    const exam = db.exams.find(e => e.exam_id === examId);
 
+    if (postgresAdapter.isConnected) {
+      const examResults = await postgresService.getResultsForExam(examId);
+      if (!examResults) {
+        return res.status(404).json({ error: 'Exam not found.' });
+      }
+      return res.json(examResults);
+    }
+
+    const exam = db.exams.find(e => e.exam_id === examId);
     if (!exam) {
       return res.status(404).json({ error: 'Exam not found.' });
     }
@@ -165,3 +255,4 @@ router.get('/exams/:examId/results', authenticateToken, requireRole(['TEACHER', 
 });
 
 export default router;
+

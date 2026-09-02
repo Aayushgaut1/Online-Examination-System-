@@ -85,7 +85,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialTab = 'login', onNavi
     }
   };
 
-  const handleQuickLogin = async (accountKey: 'teacher' | 'alex' | 'maya') => {
+  const handleQuickLogin = async (accountKey: 'teacher' | 'aarav' | 'ananya' | 'rohan') => {
     await switchQuickAccount(accountKey);
     if (accountKey === 'teacher') {
       onNavigate('teacher-dashboard');
@@ -113,7 +113,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialTab = 'login', onNavi
             {tab === 'login'
               ? 'Access your examinations, question bank, and real-time results.'
               : tab === 'register'
-              ? 'Register with MySQL referential authentication.'
+              ? 'Register with Supabase PostgreSQL authentication.'
               : 'Enter your email to receive recovery instructions.'}
           </p>
         </div>
@@ -142,28 +142,36 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialTab = 'login', onNavi
 
         {/* 1-Click Fast Demonstration Fillers */}
         <div className="mb-6 p-3 rounded-xl bg-indigo-950/40 border border-indigo-500/20">
-          <p className="text-[11px] font-mono text-indigo-300 font-semibold mb-2">⚡ 1-Click Instant Demo Credentials:</p>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-[11px] font-mono text-indigo-300 font-semibold">⚡ Supabase Database Accounts:</p>
+            <span className="text-[9px] font-mono bg-emerald-950/80 text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-500/30">
+              PostgreSQL
+            </span>
+          </div>
           <div className="grid grid-cols-3 gap-1.5 text-[10px]">
             <button
               type="button"
               onClick={() => handleQuickLogin('teacher')}
               className="px-2 py-1.5 rounded-lg bg-indigo-900/60 hover:bg-indigo-800 text-indigo-200 font-bold text-center border border-indigo-500/30 transition-colors"
+              title="Dr. Priya Sharma (TEACHER)"
             >
-              Teacher (Sarah)
+              Dr. Priya (Teacher)
             </button>
             <button
               type="button"
-              onClick={() => handleQuickLogin('alex')}
+              onClick={() => handleQuickLogin('aarav')}
               className="px-2 py-1.5 rounded-lg bg-cyan-900/60 hover:bg-cyan-800 text-cyan-200 font-bold text-center border border-cyan-500/30 transition-colors"
+              title="Aarav Kumar (STUDENT - CSE2026-001)"
             >
-              Student (Alex)
+              Aarav (Student)
             </button>
             <button
               type="button"
-              onClick={() => handleQuickLogin('maya')}
+              onClick={() => handleQuickLogin('ananya')}
               className="px-2 py-1.5 rounded-lg bg-emerald-900/60 hover:bg-emerald-800 text-emerald-200 font-bold text-center border border-emerald-500/30 transition-colors"
+              title="Ananya Singh (STUDENT - CSE2026-002)"
             >
-              Student (Maya)
+              Ananya (Student)
             </button>
           </div>
         </div>
@@ -216,7 +224,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ initialTab = 'login', onNavi
               className="w-full py-3 rounded-xl text-xs font-bold bg-gradient-to-r from-indigo-600 to-indigo-500 text-white shadow-lg shadow-indigo-600/30 hover:from-indigo-500 hover:to-indigo-400 transition-all flex items-center justify-center gap-2 btn-3d disabled:opacity-50"
             >
               {loading ? (
-                <span>Authenticating with MySQL...</span>
+                <span>Authenticating with Supabase PostgreSQL...</span>
               ) : (
                 <>
                   <span>Sign In</span>

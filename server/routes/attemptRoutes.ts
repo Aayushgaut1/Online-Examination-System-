@@ -1,5 +1,7 @@
 import { Router, Response } from 'express';
 import { db, AttemptRow, AnswerRow, ResultRow } from '../db.js';
+import { postgresAdapter } from '../postgresAdapter.js';
+import { postgresService } from '../postgresService.js';
 import { authenticateToken, requireRole, AuthRequest } from '../auth.js';
 
 const router = Router();
@@ -21,6 +23,36 @@ router.post('/exams/:examId/attempts', authenticateToken, requireRole(['STUDENT'
 
     if (!studentId) {
       return res.status(400).json({ error: 'Student profile not linked to user account.' });
+    }
+
+    if (postgresAdapter.isConnected) {
+      const exam = await postgresService.getExamById(examId, false);
+      if (!exam || !exam.is_published) {
+        return res.status(404).json({ error: 'Exam not found or is currently unpublished.' });
+      }
+
+      const existingAttempt = await postgresService.findActiveAttempt(examId, studentId);
+      if (existingAttempt) {
+        const remainingSeconds = calculateRemainingSeconds(existingAttempt, exam.duration_minutes);
+        if (remainingSeconds <= 0) {
+          await postgresService.expireAttempt(existingAttempt.attempt_id);
+        } else {
+          return res.json({
+            message: 'Resuming active exam attempt',
+            attempt: existingAttempt,
+            remaining_seconds: remainingSeconds,
+            is_resumed: true
+          });
+        }
+      }
+
+      const newAttempt = await postgresService.createAttempt(examId, studentId);
+      return res.status(201).json({
+        message: 'Exam attempt started',
+        attempt: newAttempt,
+        remaining_seconds: exam.duration_minutes * 60,
+        is_resumed: false
+      });
     }
 
     const exam = db.exams.find(e => e.exam_id === examId);
@@ -82,8 +114,51 @@ router.post('/exams/:examId/attempts', authenticateToken, requireRole(['STUDENT'
 router.get('/attempts/:id', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const attemptId = Number(req.params.id);
-    const attempt = db.attempts.find(a => a.attempt_id === attemptId);
 
+    if (postgresAdapter.isConnected) {
+      const attempt = await postgresService.getAttemptById(attemptId);
+      if (!attempt) {
+        return res.status(404).json({ error: 'Attempt not found.' });
+      }
+
+      const isTeacher = req.user?.role === 'TEACHER' || req.user?.role === 'ADMIN';
+      const isOwner = attempt.student_id === req.user?.student_id;
+      if (!isTeacher && !isOwner) {
+        return res.status(403).json({ error: 'Access denied to this exam attempt.' });
+      }
+
+      const exam = await postgresService.getExamById(attempt.exam_id, isTeacher);
+      if (!exam) {
+        return res.status(404).json({ error: 'Associated exam not found.' });
+      }
+
+      const student = await postgresService.findStudentById(attempt.student_id);
+
+      let remainingSeconds = 0;
+      if (attempt.status === 'IN_PROGRESS') {
+        remainingSeconds = calculateRemainingSeconds(attempt, exam.duration_minutes);
+        if (remainingSeconds <= 0) {
+          await postgresService.expireAttempt(attempt.attempt_id);
+          attempt.status = 'EXPIRED';
+        }
+      }
+
+      const questions = exam.questions || [];
+      const answers = await postgresService.getAnswersForAttempt(attemptId);
+      const result = await postgresService.getResultByAttemptId(attemptId);
+
+      return res.json({
+        attempt,
+        exam,
+        student,
+        questions,
+        answers,
+        result,
+        remaining_seconds: remainingSeconds
+      });
+    }
+
+    const attempt = db.attempts.find(a => a.attempt_id === attemptId);
     if (!attempt) {
       return res.status(404).json({ error: 'Attempt not found.' });
     }
@@ -159,8 +234,48 @@ router.get('/attempts/:id', authenticateToken, async (req: AuthRequest, res: Res
 router.put('/attempts/:id/answers', authenticateToken, requireRole(['STUDENT']), async (req: AuthRequest, res: Response) => {
   try {
     const attemptId = Number(req.params.id);
-    const attempt = db.attempts.find(a => a.attempt_id === attemptId);
+    const { question_id, selected_option_id, is_marked_for_review } = req.body;
 
+    if (!question_id) {
+      return res.status(400).json({ error: 'question_id is required.' });
+    }
+
+    if (postgresAdapter.isConnected) {
+      const attempt = await postgresService.getAttemptById(attemptId);
+      if (!attempt) {
+        return res.status(404).json({ error: 'Attempt not found.' });
+      }
+
+      if (attempt.student_id !== req.user?.student_id) {
+        return res.status(403).json({ error: 'Unauthorized attempt access.' });
+      }
+
+      if (attempt.status !== 'IN_PROGRESS') {
+        return res.status(400).json({ error: 'Cannot save answers for an attempt that is already completed or expired.' });
+      }
+
+      const exam = await postgresService.getExamById(attempt.exam_id, false);
+      if (!exam) {
+        return res.status(404).json({ error: 'Exam not found.' });
+      }
+
+      const remainingSeconds = calculateRemainingSeconds(attempt, exam.duration_minutes);
+      if (remainingSeconds <= 0) {
+        await postgresService.expireAttempt(attemptId);
+        return res.status(400).json({ error: 'Exam duration has expired. Answers can no longer be modified.' });
+      }
+
+      const qId = Number(question_id);
+      const optId = selected_option_id ? Number(selected_option_id) : null;
+      const savedAnswer = await postgresService.saveAnswer(attemptId, qId, optId, Boolean(is_marked_for_review));
+
+      return res.json({
+        message: 'Answer recorded successfully',
+        answer: savedAnswer
+      });
+    }
+
+    const attempt = db.attempts.find(a => a.attempt_id === attemptId);
     if (!attempt) {
       return res.status(404).json({ error: 'Attempt not found.' });
     }
@@ -185,12 +300,6 @@ router.put('/attempts/:id/answers', authenticateToken, requireRole(['STUDENT']),
       attempt.end_time = new Date().toISOString();
       await db.save();
       return res.status(400).json({ error: 'Exam duration has expired. Answers can no longer be modified.' });
-    }
-
-    const { question_id, selected_option_id, is_marked_for_review } = req.body;
-
-    if (!question_id) {
-      return res.status(400).json({ error: 'question_id is required.' });
     }
 
     const qId = Number(question_id);
@@ -232,8 +341,38 @@ router.put('/attempts/:id/answers', authenticateToken, requireRole(['STUDENT']),
 router.post('/attempts/:id/submit', authenticateToken, requireRole(['STUDENT']), async (req: AuthRequest, res: Response) => {
   try {
     const attemptId = Number(req.params.id);
-    const attempt = db.attempts.find(a => a.attempt_id === attemptId);
 
+    if (postgresAdapter.isConnected) {
+      const attempt = await postgresService.getAttemptById(attemptId);
+      if (!attempt) {
+        return res.status(404).json({ error: 'Attempt not found.' });
+      }
+
+      if (attempt.student_id !== req.user?.student_id) {
+        return res.status(403).json({ error: 'Unauthorized attempt access.' });
+      }
+
+      if (attempt.status === 'SUBMITTED') {
+        const existingResult = await postgresService.getResultByAttemptId(attemptId);
+        if (existingResult) {
+          return res.json({
+            message: 'Exam was already submitted',
+            result: existingResult
+          });
+        }
+      }
+
+      const { answers: finalAnswers } = req.body;
+      const { result, attempt: updatedAttempt } = await postgresService.submitAttemptAndGrade(attemptId, finalAnswers);
+
+      return res.status(200).json({
+        message: 'Exam successfully submitted and automatically evaluated.',
+        result,
+        attempt: updatedAttempt
+      });
+    }
+
+    const attempt = db.attempts.find(a => a.attempt_id === attemptId);
     if (!attempt) {
       return res.status(404).json({ error: 'Attempt not found.' });
     }
@@ -358,3 +497,4 @@ router.post('/attempts/:id/submit', authenticateToken, requireRole(['STUDENT']),
 });
 
 export default router;
+

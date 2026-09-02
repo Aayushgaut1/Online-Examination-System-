@@ -177,7 +177,7 @@ export const ResultPage: React.FC<ResultPageProps> = ({ resultId, onNavigate }) 
 
           <div className="pt-2 flex items-center gap-2 text-xs text-slate-400">
             <ShieldCheck className="w-4 h-4 text-emerald-400" />
-            <span>Evaluation validated with ACID referential consistency on MySQL.</span>
+            <span>Evaluation validated with ACID referential consistency on Supabase PostgreSQL.</span>
           </div>
         </div>
       </motion.div>

@@ -121,7 +121,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate }) => {
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-cyan-300 hover:bg-cyan-500/10 transition-all border border-cyan-500/20"
             >
               <Database className="w-3.5 h-3.5" />
-              MySQL Schema
+              Supabase Schema
             </button>
           </nav>
 
@@ -131,16 +131,24 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate }) => {
             <div className="hidden xl:flex items-center gap-1.5 bg-slate-900 border border-white/10 px-2.5 py-1 rounded-lg text-[11px]">
               <span className="text-slate-400 font-medium">Quick Demo:</span>
               <button
-                onClick={() => switchQuickAccount('teacher')}
-                className="px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 hover:bg-indigo-900 transition-colors font-semibold"
+                onClick={async () => {
+                  await switchQuickAccount('teacher');
+                  onNavigate('teacher-dashboard');
+                }}
+                className="px-2.5 py-1 rounded bg-indigo-950/80 text-indigo-300 hover:bg-indigo-900 transition-colors font-semibold cursor-pointer border border-indigo-500/30"
+                title="Dr. Priya Sharma (teacher@examverse.com)"
               >
-                Teacher (Dr. Sarah)
+                Dr. Priya (Teacher)
               </button>
               <button
-                onClick={() => switchQuickAccount('alex')}
-                className="px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 hover:bg-cyan-900 transition-colors font-semibold"
+                onClick={async () => {
+                  await switchQuickAccount('aarav');
+                  onNavigate('student-dashboard');
+                }}
+                className="px-2.5 py-1 rounded bg-cyan-950/80 text-cyan-300 hover:bg-cyan-900 transition-colors font-semibold cursor-pointer border border-cyan-500/30"
+                title="Aarav Kumar (aarav@example.com)"
               >
-                Student (Alex)
+                Aarav (Student)
               </button>
             </div>
 
@@ -316,7 +324,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate }) => {
                 }}
                 className="w-full text-left px-3 py-2 rounded-lg text-sm text-cyan-300 font-semibold"
               >
-                View MySQL Schema
+                View Supabase Schema
               </button>
             </motion.div>
           )}

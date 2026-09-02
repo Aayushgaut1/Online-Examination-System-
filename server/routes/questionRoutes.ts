@@ -1,5 +1,7 @@
 import { Router, Response } from 'express';
 import { db, QuestionRow, OptionRow } from '../db.js';
+import { postgresAdapter } from '../postgresAdapter.js';
+import { postgresService } from '../postgresService.js';
 import { authenticateToken, requireRole, AuthRequest } from '../auth.js';
 
 const router = Router();
@@ -8,13 +10,17 @@ const router = Router();
 router.get('/exams/:examId/questions', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     const examId = Number(req.params.examId);
-    const exam = db.exams.find(e => e.exam_id === examId);
+    const isTeacher = req.user?.role === 'TEACHER' || req.user?.role === 'ADMIN';
 
+    if (postgresAdapter.isConnected) {
+      const questions = await postgresService.getQuestionsForExam(examId, isTeacher);
+      return res.json(questions);
+    }
+
+    const exam = db.exams.find(e => e.exam_id === examId);
     if (!exam) {
       return res.status(404).json({ error: 'Exam not found.' });
     }
-
-    const isTeacher = req.user?.role === 'TEACHER' || req.user?.role === 'ADMIN';
 
     const questions = db.questions
       .filter(q => q.exam_id === examId)
@@ -42,12 +48,6 @@ router.get('/exams/:examId/questions', authenticateToken, async (req: AuthReques
 router.post('/exams/:examId/questions', authenticateToken, requireRole(['TEACHER', 'ADMIN']), async (req: AuthRequest, res: Response) => {
   try {
     const examId = Number(req.params.examId);
-    const exam = db.exams.find(e => e.exam_id === examId);
-
-    if (!exam) {
-      return res.status(404).json({ error: 'Exam not found.' });
-    }
-
     const { question_text, marks = 1, options } = req.body;
 
     if (!question_text || !Array.isArray(options) || options.length < 2) {
@@ -57,6 +57,23 @@ router.post('/exams/:examId/questions', authenticateToken, requireRole(['TEACHER
     const hasCorrect = options.some(o => o.is_correct === true);
     if (!hasCorrect) {
       return res.status(400).json({ error: 'Please mark exactly one option as the correct answer.' });
+    }
+
+    if (postgresAdapter.isConnected) {
+      const createdQuestion = await postgresService.addQuestion(examId, {
+        question_text,
+        marks: Number(marks),
+        options
+      });
+      return res.status(201).json({
+        message: 'Question added successfully',
+        question: createdQuestion
+      });
+    }
+
+    const exam = db.exams.find(e => e.exam_id === examId);
+    if (!exam) {
+      return res.status(404).json({ error: 'Exam not found.' });
     }
 
     const now = new Date().toISOString();
@@ -111,13 +128,24 @@ router.post('/exams/:examId/questions', authenticateToken, requireRole(['TEACHER
 router.put('/questions/:id', authenticateToken, requireRole(['TEACHER', 'ADMIN']), async (req: AuthRequest, res: Response) => {
   try {
     const qId = Number(req.params.id);
-    const question = db.questions.find(q => q.question_id === qId);
+    const { question_text, marks, options } = req.body;
 
+    if (postgresAdapter.isConnected) {
+      const updatedQuestion = await postgresService.updateQuestion(qId, {
+        question_text,
+        marks: marks !== undefined ? Number(marks) : undefined,
+        options
+      });
+      return res.json({
+        message: 'Question updated successfully',
+        question: updatedQuestion
+      });
+    }
+
+    const question = db.questions.find(q => q.question_id === qId);
     if (!question) {
       return res.status(404).json({ error: 'Question not found.' });
     }
-
-    const { question_text, marks, options } = req.body;
 
     if (question_text) question.question_text = question_text.trim();
     if (marks) question.marks = Number(marks);
@@ -165,8 +193,13 @@ router.put('/questions/:id', authenticateToken, requireRole(['TEACHER', 'ADMIN']
 router.delete('/questions/:id', authenticateToken, requireRole(['TEACHER', 'ADMIN']), async (req: AuthRequest, res: Response) => {
   try {
     const qId = Number(req.params.id);
-    const qIndex = db.questions.findIndex(q => q.question_id === qId);
 
+    if (postgresAdapter.isConnected) {
+      await postgresService.deleteQuestion(qId);
+      return res.json({ message: 'Question deleted successfully.' });
+    }
+
+    const qIndex = db.questions.findIndex(q => q.question_id === qId);
     if (qIndex === -1) {
       return res.status(404).json({ error: 'Question not found.' });
     }
@@ -195,3 +228,4 @@ router.delete('/questions/:id', authenticateToken, requireRole(['TEACHER', 'ADMI
 });
 
 export default router;
+

@@ -123,8 +123,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
                   whileHover={{ scale: 1.03, y: -1 }}
                   whileTap={{ scale: 0.97 }}
                   onClick={async () => {
-                    await switchQuickAccount('teacher');
-                    onNavigate('teacher-dashboard');
+                    const ok = await switchQuickAccount('teacher');
+                    if (ok) onNavigate('teacher-dashboard');
                   }}
                   className="px-3 py-1.5 rounded-lg bg-indigo-950/80 border border-indigo-500/40 text-indigo-200 text-xs font-semibold hover:bg-indigo-900 transition-colors flex items-center gap-1.5 cursor-pointer shadow-md"
                 >
@@ -135,8 +135,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
                   whileHover={{ scale: 1.03, y: -1 }}
                   whileTap={{ scale: 0.97 }}
                   onClick={async () => {
-                    await switchQuickAccount('alex');
-                    onNavigate('student-dashboard');
+                    const ok = await switchQuickAccount('alex');
+                    if (ok) onNavigate('student-dashboard');
                   }}
                   className="px-3 py-1.5 rounded-lg bg-cyan-950/80 border border-cyan-500/40 text-cyan-200 text-xs font-semibold hover:bg-cyan-900 transition-colors flex items-center gap-1.5 cursor-pointer shadow-md"
                 >
@@ -147,8 +147,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
                   whileHover={{ scale: 1.03, y: -1 }}
                   whileTap={{ scale: 0.97 }}
                   onClick={async () => {
-                    await switchQuickAccount('maya');
-                    onNavigate('student-dashboard');
+                    const ok = await switchQuickAccount('maya');
+                    if (ok) onNavigate('student-dashboard');
                   }}
                   className="px-3 py-1.5 rounded-lg bg-emerald-950/80 border border-emerald-500/40 text-emerald-200 text-xs font-semibold hover:bg-emerald-900 transition-colors flex items-center gap-1.5 cursor-pointer shadow-md"
                 >
@@ -203,11 +203,11 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
             {
               step: '03',
               title: 'Auto-Grading & Locking',
-              desc: 'Instant server-side grading computes score, percentage, and pass/fail against MySQL tables.',
+              desc: 'Instant server-side grading computes score, percentage, and pass/fail against Supabase PostgreSQL tables.',
               icon: Zap,
               color: 'text-emerald-400',
               border: 'border-emerald-500/30',
-              glow: 'rgba(16, 185, 129, 0.15)'
+              glow: 'rgba(168, 85, 247, 0.15)'
             },
             {
               step: '04',
@@ -293,10 +293,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
                 <Database className="w-6 h-6" />
               </div>
               <h3 className="text-lg font-bold text-white font-['Outfit']" style={{ transform: 'translateZ(20px)' }}>
-                Real MySQL Relational Storage
+                Real Supabase PostgreSQL Storage
               </h3>
               <p className="text-xs text-slate-300 leading-relaxed" style={{ transform: 'translateZ(15px)' }}>
-                Preserves referential integrity across 8 relational tables (EXAM, QUESTION, OPTION, STUDENT, ATTEMPT, ANSWER, RESULT, USERS) with foreign keys and cascade deletes.
+                Preserves referential integrity across 8 relational tables (exams, questions, options, students, attempts, answers, results, users) with foreign keys and cascade deletes.
               </p>
             </div>
           </TiltCard>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Database, X, RefreshCw, Layers, CheckCircle2, ShieldAlert, Cpu } from 'lucide-react';
+import { Database, X, RefreshCw, Layers, CheckCircle2, ShieldAlert, Cpu, PlusCircle } from 'lucide-react';
 import { api } from '../services/api';
 import { useToast } from '../context/ToastContext';
 
@@ -45,6 +45,22 @@ export const DatabaseModal: React.FC<DatabaseModalProps> = ({ isOpen, onClose })
       await fetchStatus();
     } catch (err: any) {
       toast.error('Reset failed: ' + err.message);
+    } finally {
+      setResetting(false);
+    }
+  };
+
+  const handleCreateNewDatabase = async () => {
+    if (!window.confirm('Create a new clean database? This will re-initialize all 8 relational tables (USERS, STUDENT, EXAM, QUESTION, OPTION, ATTEMPT, ANSWER, RESULT) with clean sequences and standard seed schemas.')) {
+      return;
+    }
+    try {
+      setResetting(true);
+      await api.recreateDatabase();
+      toast.success('New database created and initialized successfully!');
+      await fetchStatus();
+    } catch (err: any) {
+      toast.error('Failed to create new database: ' + err.message);
     } finally {
       setResetting(false);
     }
@@ -217,18 +233,37 @@ export const DatabaseModal: React.FC<DatabaseModalProps> = ({ isOpen, onClose })
           </div>
 
           {/* Footer Actions */}
-          <div className="pt-4 border-t border-white/10 flex items-center justify-between">
-            <button
-              onClick={handleResetSeed}
-              disabled={resetting}
-              className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold bg-rose-500/20 text-rose-300 border border-rose-500/30 hover:bg-rose-500/30 transition-colors disabled:opacity-50"
-            >
-              <RefreshCw className={`w-4 h-4 ${resetting ? 'animate-spin' : ''}`} />
-              Reset & Re-Seed Sample Database
-            </button>
+          <div className="pt-4 border-t border-white/10 flex flex-wrap items-center justify-between gap-2.5">
+            <div className="flex items-center gap-2">
+              {dbData?.is_postgres ? (
+                <div className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                  Connected to PostgreSQL / Supabase — Schema Active
+                </div>
+              ) : (
+                <>
+                  <button
+                    onClick={handleCreateNewDatabase}
+                    disabled={resetting}
+                    className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 hover:bg-indigo-500/30 transition-colors disabled:opacity-50 cursor-pointer shadow-sm"
+                  >
+                    <PlusCircle className="w-4 h-4 text-indigo-400" />
+                    Initialize New Clean Database
+                  </button>
+                  <button
+                    onClick={handleResetSeed}
+                    disabled={resetting}
+                    className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold bg-rose-500/20 text-rose-300 border border-rose-500/30 hover:bg-rose-500/30 transition-colors disabled:opacity-50 cursor-pointer"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${resetting ? 'animate-spin' : ''}`} />
+                    Reset & Re-Seed
+                  </button>
+                </>
+              )}
+            </div>
             <button
               onClick={onClose}
-              className="px-4 py-2 rounded-xl text-xs font-semibold bg-white/10 text-white hover:bg-white/20 transition-colors"
+              className="px-4 py-2 rounded-xl text-xs font-semibold bg-white/10 text-white hover:bg-white/20 transition-colors cursor-pointer"
             >
               Close
             </button>

@@ -133,7 +133,7 @@ export const CreateExamPage: React.FC<CreateExamPageProps> = ({ onNavigate }) =>
       };
 
       const res = await api.createExam(payload);
-      toast.success(`Exam "${title}" successfully stored in MySQL!`, 'Published');
+      toast.success(`Exam "${title}" successfully stored in Supabase!`, 'Published');
       onNavigate('teacher-dashboard');
     } catch (err: any) {
       toast.error(err.message || 'Failed to save exam to database.');
@@ -164,7 +164,7 @@ export const CreateExamPage: React.FC<CreateExamPageProps> = ({ onNavigate }) =>
           { num: 1, label: 'Exam Details' },
           { num: 2, label: 'Questions & MCQs' },
           { num: 3, label: 'Student Preview' },
-          { num: 4, label: 'Publish to MySQL' }
+          { num: 4, label: 'Publish to Supabase' }
         ].map((s) => (
           <button
             key={s.num}
@@ -541,9 +541,9 @@ export const CreateExamPage: React.FC<CreateExamPageProps> = ({ onNavigate }) =>
           </div>
 
           <div className="max-w-md mx-auto space-y-2">
-            <h2 className="text-2xl font-bold text-white font-['Outfit']">Ready to Store in MySQL</h2>
+            <h2 className="text-2xl font-bold text-white font-['Outfit']">Ready to Store in Supabase</h2>
             <p className="text-xs text-slate-300 leading-relaxed">
-              Upon confirmation, the relational database will insert the `exam` entity and cascade insert all {questions.length} associated `question` and {questions.length * 4} `option` records.
+              Upon confirmation, the relational database will insert the `exams` entity and cascade insert all {questions.length} associated `questions` and {questions.length * 4} `options` records.
             </p>
           </div>
 
@@ -578,7 +578,7 @@ export const CreateExamPage: React.FC<CreateExamPageProps> = ({ onNavigate }) =>
               className="w-full sm:w-auto px-8 py-3.5 rounded-xl text-xs font-bold bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white shadow-xl shadow-emerald-600/30 transition-all flex items-center justify-center gap-2 btn-3d disabled:opacity-50"
             >
               <Send className="w-4 h-4" />
-              {isSaving ? 'Writing to MySQL Database...' : 'Confirm & Save Examination'}
+              {isSaving ? 'Writing to Supabase Database...' : 'Confirm & Save Examination'}
             </button>
           </div>
         </motion.div>

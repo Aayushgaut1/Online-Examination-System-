@@ -1,5 +1,7 @@
 import { Router, Response } from 'express';
 import { db, ExamRow, QuestionRow, OptionRow } from '../db.js';
+import { postgresAdapter } from '../postgresAdapter.js';
+import { postgresService } from '../postgresService.js';
 import { authenticateToken, requireRole, AuthRequest } from '../auth.js';
 
 const router = Router();
@@ -22,6 +24,11 @@ router.get('/', async (req: AuthRequest, res: Response) => {
 
     const isTeacher = user?.role === 'TEACHER' || user?.role === 'ADMIN';
     const studentId = user?.student_id;
+
+    if (postgresAdapter.isConnected) {
+      const exams = await postgresService.listExams(isTeacher, studentId);
+      return res.json(exams);
+    }
 
     // Filter exams: Teachers see all, students/guests see only published
     const examsList = db.exams.filter(e => isTeacher || e.is_published);
@@ -65,11 +72,6 @@ router.get('/', async (req: AuthRequest, res: Response) => {
 router.get('/:id', async (req: AuthRequest, res: Response) => {
   try {
     const examId = Number(req.params.id);
-    const exam = db.exams.find(e => e.exam_id === examId);
-
-    if (!exam) {
-      return res.status(404).json({ error: 'Exam not found.' });
-    }
 
     const authHeader = req.headers['authorization'];
     let user: any = null;
@@ -86,6 +88,19 @@ router.get('/:id', async (req: AuthRequest, res: Response) => {
 
     const isTeacher = user?.role === 'TEACHER' || user?.role === 'ADMIN';
 
+    if (postgresAdapter.isConnected) {
+      const exam = await postgresService.getExamById(examId, isTeacher);
+      if (!exam) {
+        return res.status(404).json({ error: 'Exam not found.' });
+      }
+      return res.json(exam);
+    }
+
+    const exam = db.exams.find(e => e.exam_id === examId);
+    if (!exam) {
+      return res.status(404).json({ error: 'Exam not found.' });
+    }
+
     // Questions and options
     const questions = db.questions
       .filter(q => q.exam_id === examId)
@@ -96,7 +111,6 @@ router.get('/:id', async (req: AuthRequest, res: Response) => {
           option_id: o.option_id,
           question_id: o.question_id,
           option_text: o.option_text,
-          // Hide is_correct unless teacher
           ...(isTeacher ? { is_correct: o.is_correct } : {})
         }));
 
@@ -128,9 +142,26 @@ router.post('/', authenticateToken, requireRole(['TEACHER', 'ADMIN']), async (re
       return res.status(400).json({ error: 'Exam title and duration in minutes are required.' });
     }
 
+    if (postgresAdapter.isConnected) {
+      const newExam = await postgresService.createExam({
+        title,
+        description: description || '',
+        duration_minutes: Number(duration_minutes),
+        total_marks: Number(total_marks) || 100,
+        passing_percentage: Number(passing_percentage) || 40,
+        is_published: Boolean(is_published),
+        created_by: req.user!.user_id,
+        questions
+      });
+
+      return res.status(201).json({
+        message: 'Exam created successfully',
+        exam: newExam
+      });
+    }
+
     const now = new Date().toISOString();
     const examId = db.nextId('exam');
-
     let calculatedTotalMarks = 0;
 
     // Create exam entry
@@ -202,8 +233,21 @@ router.post('/', authenticateToken, requireRole(['TEACHER', 'ADMIN']), async (re
 router.put('/:id', authenticateToken, requireRole(['TEACHER', 'ADMIN']), async (req: AuthRequest, res: Response) => {
   try {
     const examId = Number(req.params.id);
-    const exam = db.exams.find(e => e.exam_id === examId);
 
+    if (postgresAdapter.isConnected) {
+      const exam = await postgresService.getExamById(examId, true);
+      if (!exam) {
+        return res.status(404).json({ error: 'Exam not found.' });
+      }
+      if (exam.created_by !== req.user!.user_id && req.user!.role !== 'ADMIN') {
+        return res.status(403).json({ error: 'You are not authorized to edit this exam.' });
+      }
+
+      const updated = await postgresService.updateExam(examId, req.body);
+      return res.json({ message: 'Exam updated successfully', exam: updated });
+    }
+
+    const exam = db.exams.find(e => e.exam_id === examId);
     if (!exam) {
       return res.status(404).json({ error: 'Exam not found.' });
     }
@@ -235,8 +279,16 @@ router.put('/:id', authenticateToken, requireRole(['TEACHER', 'ADMIN']), async (
 router.patch('/:id/publish', authenticateToken, requireRole(['TEACHER', 'ADMIN']), async (req: AuthRequest, res: Response) => {
   try {
     const examId = Number(req.params.id);
-    const exam = db.exams.find(e => e.exam_id === examId);
 
+    if (postgresAdapter.isConnected) {
+      const newStatus = await postgresService.toggleExamPublish(examId);
+      return res.json({
+        message: `Exam ${newStatus ? 'published' : 'unpublished'} successfully`,
+        is_published: newStatus
+      });
+    }
+
+    const exam = db.exams.find(e => e.exam_id === examId);
     if (!exam) {
       return res.status(404).json({ error: 'Exam not found.' });
     }
@@ -258,20 +310,21 @@ router.patch('/:id/publish', authenticateToken, requireRole(['TEACHER', 'ADMIN']
 router.delete('/:id', authenticateToken, requireRole(['TEACHER', 'ADMIN']), async (req: AuthRequest, res: Response) => {
   try {
     const examId = Number(req.params.id);
-    const examIndex = db.exams.findIndex(e => e.exam_id === examId);
 
+    if (postgresAdapter.isConnected) {
+      await postgresService.deleteExam(examId);
+      return res.json({ message: 'Exam and all associated questions & attempts deleted successfully.' });
+    }
+
+    const examIndex = db.exams.findIndex(e => e.exam_id === examId);
     if (examIndex === -1) {
       return res.status(404).json({ error: 'Exam not found.' });
     }
 
     // Cascade delete questions & options
     const questionIds = db.questions.filter(q => q.exam_id === examId).map(q => q.question_id);
-    
-    // Remove options
     const filteredOptions = db.options.filter(o => !questionIds.includes(o.question_id));
-    // Remove questions
     const filteredQuestions = db.questions.filter(q => q.exam_id !== examId);
-    // Remove attempts & answers & results
     const attemptIds = db.attempts.filter(a => a.exam_id === examId).map(a => a.attempt_id);
     const filteredAnswers = db.answers.filter(a => !attemptIds.includes(a.attempt_id));
     const filteredResults = db.results.filter(r => !attemptIds.includes(r.attempt_id));
@@ -293,3 +346,4 @@ router.delete('/:id', authenticateToken, requireRole(['TEACHER', 'ADMIN']), asyn
 });
 
 export default router;
+

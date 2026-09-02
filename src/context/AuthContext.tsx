@@ -16,7 +16,7 @@ interface AuthContextType {
   register: (data: { name: string; email: string; password: string; role?: string; roll_no?: string }) => Promise<boolean>;
   logout: () => void;
   refreshUser: () => Promise<void>;
-  switchQuickAccount: (accountKey: 'teacher' | 'alex' | 'maya' | 'liam') => Promise<void>;
+  switchQuickAccount: (accountKey: 'teacher' | 'aarav' | 'ananya' | 'rohan' | 'admin' | 'alex' | 'maya' | 'liam') => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -100,12 +100,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     toast.info('You have been logged out securely.', 'Session Ended');
   };
 
-  const switchQuickAccount = async (accountKey: 'teacher' | 'alex' | 'maya' | 'liam') => {
-    const credentials = {
-      teacher: { email: 'teacher@nexusexam.edu', password: 'password123' },
-      alex: { email: 'alex.turner@student.edu', password: 'password123' },
-      maya: { email: 'maya.patel@student.edu', password: 'password123' },
-      liam: { email: 'liam.davis@student.edu', password: 'password123' }
+  const switchQuickAccount = async (accountKey: 'teacher' | 'aarav' | 'ananya' | 'rohan' | 'admin' | 'alex' | 'maya' | 'liam') => {
+    const credentials: Record<string, { email: string; password: string }> = {
+      teacher: { email: 'teacher@examverse.com', password: 'password123' },
+      aarav: { email: 'aarav@example.com', password: 'password123' },
+      ananya: { email: 'ananya@example.com', password: 'password123' },
+      rohan: { email: 'rohan@example.com', password: 'password123' },
+      admin: { email: 'admin@examverse.com', password: 'password123' },
+      // Aliases
+      alex: { email: 'aarav@example.com', password: 'password123' },
+      maya: { email: 'ananya@example.com', password: 'password123' },
+      liam: { email: 'rohan@example.com', password: 'password123' }
     };
 
     const target = credentials[accountKey];

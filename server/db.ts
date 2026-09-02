@@ -3,6 +3,7 @@ import path from 'path';
 import mysql from 'mysql2/promise';
 import bcrypt from 'bcryptjs';
 import { INITIAL_EXAMS } from './seedData.js';
+import { postgresAdapter } from './postgresAdapter.js';
 
 export interface UserRow {
   user_id: number;
@@ -131,6 +132,7 @@ class DatabaseManager {
   };
   private mysqlPool: mysql.Pool | null = null;
   public isUsingMySQL = false;
+  public isUsingPostgres = false;
   private initialized = false;
 
   constructor() {
@@ -141,14 +143,28 @@ class DatabaseManager {
   public async init() {
     if (this.initialized) return;
 
-    // Check if MySQL connection env vars are configured and test connection
+    // 1. Try PostgreSQL / Supabase first
+    try {
+      const pgConnected = await postgresAdapter.init();
+      if (pgConnected) {
+        this.isUsingPostgres = true;
+        console.log('[DB] Application successfully attached directly to PostgreSQL/Supabase database.');
+        this.initialized = true;
+        return;
+      }
+    } catch (pgErr: any) {
+      console.warn('[DB] PostgreSQL initialization attempt:', pgErr.message);
+      this.isUsingPostgres = false;
+    }
+
+    // 2. Check if MySQL connection env vars are configured and test connection
     const dbUrl = process.env.DATABASE_URL;
     const host = process.env.MYSQL_HOST;
     const user = process.env.MYSQL_USER;
     const password = process.env.MYSQL_PASSWORD;
     const database = process.env.MYSQL_DATABASE;
 
-    if (dbUrl || (host && user && database)) {
+    if (dbUrl?.startsWith('mysql') || (host && user && database && !this.isUsingPostgres)) {
       try {
         const pool = dbUrl
           ? mysql.createPool(dbUrl)
@@ -225,6 +241,31 @@ class DatabaseManager {
     } catch (err) {
       console.error('[DB] Error saving to disk:', err);
     }
+  }
+
+  public async clearDatabase() {
+    this.state = {
+      users: [],
+      student: [],
+      exam: [],
+      question: [],
+      option: [],
+      attempt: [],
+      answer: [],
+      result: [],
+      sequences: {
+        users: 1,
+        student: 1,
+        exam: 1,
+        question: 1,
+        option: 1,
+        attempt: 1,
+        answer: 1,
+        result: 1
+      }
+    };
+    await this.save();
+    console.log('[DB] Database wiped clean.');
   }
 
   public async seedDatabase(force = false) {

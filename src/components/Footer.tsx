@@ -21,7 +21,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenDbModal }) => 
             </span>
           </div>
           <p className="text-xs text-slate-400 max-w-md leading-relaxed">
-            A production-grade, 3D online examination and testing engine built with Node.js, Express, React, and MySQL. Featuring server-authoritative timers, instantaneous automatic grading, and comprehensive student & faculty analytics.
+            A production-grade, 3D online examination and testing engine built with Node.js, Express, React, and Supabase PostgreSQL. Featuring server-authoritative timers, instantaneous automatic grading, and comprehensive student & faculty analytics.
           </p>
           <div className="flex items-center gap-3 text-xs text-slate-400">
             <span className="flex items-center gap-1.5 text-emerald-400">
@@ -29,7 +29,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenDbModal }) => 
             </span>
             <span>•</span>
             <span className="flex items-center gap-1.5 text-cyan-400">
-              <Database className="w-4 h-4" /> MySQL Schema Compliant
+              <Database className="w-4 h-4" /> Supabase PostgreSQL Connected
             </span>
           </div>
         </div>
@@ -50,8 +50,8 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenDbModal }) => 
         <div className="space-y-3">
           <h4 className="text-xs font-bold text-white uppercase tracking-wider font-mono">Test Credentials</h4>
           <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5 space-y-1.5 text-xs text-slate-300 font-mono">
-            <p><span className="text-indigo-400 font-semibold">Teacher:</span> teacher@nexusexam.edu</p>
-            <p><span className="text-cyan-400 font-semibold">Student:</span> alex.turner@student.edu</p>
+            <p><span className="text-indigo-400 font-semibold">Teacher:</span> teacher@examverse.com</p>
+            <p><span className="text-cyan-400 font-semibold">Student:</span> aarav@example.com</p>
             <p><span className="text-amber-400 font-semibold">Pass:</span> password123</p>
           </div>
         </div>

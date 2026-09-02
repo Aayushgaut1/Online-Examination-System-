@@ -1,8 +1,8 @@
 import express from 'express';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import { db } from './server/db.js';
+import { postgresAdapter } from './server/postgresAdapter.js';
 import authRoutes from './server/routes/authRoutes.js';
 import examRoutes from './server/routes/examRoutes.js';
 import questionRoutes from './server/routes/questionRoutes.js';
@@ -11,14 +11,11 @@ import resultRoutes from './server/routes/resultRoutes.js';
 import studentRoutes from './server/routes/studentRoutes.js';
 import dashboardRoutes from './server/routes/dashboardRoutes.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  // Initialize Database (Connects to MySQL or activates disk-backed ACID engine)
+  // Initialize Database (Connects to PostgreSQL/Supabase, MySQL, or activates disk-backed engine)
   await db.init();
 
   // Middlewares
@@ -41,7 +38,9 @@ async function startServer() {
       status: 'ok',
       system: 'NexusExam Online Examination System',
       timestamp: new Date().toISOString(),
-      database: db.isUsingMySQL ? 'MySQL' : 'Persistent Relational Engine'
+      database: postgresAdapter.isConnected
+        ? `PostgreSQL (${postgresAdapter.connectionType})`
+        : (db.isUsingMySQL ? 'MySQL' : 'Persistent Relational Engine')
     });
   });
 
@@ -51,8 +50,10 @@ async function startServer() {
   app.use('/api', questionRoutes);
   app.use('/api', attemptRoutes);
   app.use('/api/results', resultRoutes);
+  app.use('/api', resultRoutes);
   app.use('/api/students', studentRoutes);
   app.use('/api/dashboard', dashboardRoutes);
+  app.use('/api', dashboardRoutes);
 
   // Global API 404 handler
   app.use('/api/*', (req, res) => {
@@ -83,7 +84,13 @@ async function startServer() {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`=======================================================`);
     console.log(`🚀 NexusExam Server running on http://0.0.0.0:${PORT}`);
-    console.log(`📊 Storage Mode: ${db.isUsingMySQL ? 'MySQL Connection Pool' : 'Built-in Persistent Relational Engine'}`);
+    console.log(
+      `📊 Storage Mode: ${
+        postgresAdapter.isConnected
+          ? `PostgreSQL / Supabase (${postgresAdapter.connectionType})`
+          : (db.isUsingMySQL ? 'MySQL Connection Pool' : 'Built-in Persistent Relational Engine')
+      }`
+    );
     console.log(`=======================================================`);
   });
 }
@@ -92,3 +99,4 @@ startServer().catch(err => {
   console.error('Failed to start NexusExam server:', err);
   process.exit(1);
 });
+

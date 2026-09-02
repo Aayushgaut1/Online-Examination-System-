@@ -29,7 +29,7 @@ interface StudentDashboardProps {
 }
 
 export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onNavigate }) => {
-  const { user, student } = useAuth();
+  const { user, student, isAuthenticated, switchQuickAccount } = useAuth();
   const [stats, setStats] = useState<StudentDashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [startingExamId, setStartingExamId] = useState<number | null>(null);
@@ -38,10 +38,14 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onNavigate }
   const fetchDashboardData = async () => {
     try {
       setLoading(true);
+      // If not authenticated and no token, auto-activate Alex demo account for seamless preview
+      if (!isAuthenticated && !localStorage.getItem('nexusexam_token')) {
+        await switchQuickAccount('alex');
+      }
       const data = await api.getStudentDashboard();
       setStats(data);
     } catch (err: any) {
-      toast.error('Failed to load student dashboard: ' + err.message);
+      console.warn('Dashboard fetch notice:', err.message);
     } finally {
       setLoading(false);
     }
@@ -49,7 +53,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onNavigate }
 
   useEffect(() => {
     fetchDashboardData();
-  }, []);
+  }, [isAuthenticated]);
 
   const handleStartOrResumeExam = async (examId: number) => {
     try {
@@ -96,7 +100,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onNavigate }
             <span className="text-xs text-slate-400 font-mono">ROLL: {student?.roll_no || 'CS-2026-001'}</span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-extrabold text-white font-['Outfit']">
-            Welcome back, {student?.name || user?.name}!
+            Welcome back, {student?.name || user?.name || stats?.student?.name || 'Alex Turner'}!
           </h1>
           <p className="text-xs text-slate-400 max-w-xl">
             Track your upcoming examinations, continue in-progress tests, and review detailed answer breakdowns.

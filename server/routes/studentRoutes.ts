@@ -1,5 +1,7 @@
 import { Router, Response } from 'express';
 import { db } from '../db.js';
+import { postgresAdapter } from '../postgresAdapter.js';
+import { postgresService } from '../postgresService.js';
 import { authenticateToken, requireRole, AuthRequest } from '../auth.js';
 
 const router = Router();
@@ -7,6 +9,11 @@ const router = Router();
 // GET /api/students - List all students (Teacher only)
 router.get('/', authenticateToken, requireRole(['TEACHER', 'ADMIN']), async (req: AuthRequest, res: Response) => {
   try {
+    if (postgresAdapter.isConnected) {
+      const students = await postgresService.listStudents();
+      return res.json(students);
+    }
+
     const students = db.students.map(s => {
       const studentAttempts = db.attempts.filter(a => a.student_id === s.student_id);
       const studentResults = db.results.filter(r => studentAttempts.some(a => a.attempt_id === r.attempt_id));
@@ -44,6 +51,14 @@ router.get('/:id', authenticateToken, async (req: AuthRequest, res: Response) =>
 
     if (!isTeacher && !isOwner) {
       return res.status(403).json({ error: 'Access denied.' });
+    }
+
+    if (postgresAdapter.isConnected) {
+      const stats = await postgresService.getStudentDashboardStats(studentId);
+      if (!stats || !stats.student) {
+        return res.status(404).json({ error: 'Student not found.' });
+      }
+      return res.json(stats);
     }
 
     const student = db.students.find(s => s.student_id === studentId);
@@ -99,3 +114,4 @@ router.get('/:id', authenticateToken, async (req: AuthRequest, res: Response) =>
 });
 
 export default router;
+
