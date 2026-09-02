@@ -36,17 +36,36 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     useState<StudentDashboardStats | null>(null);
 
   const [loading, setLoading] = useState(true);
+
   const [startingExamId, setStartingExamId] =
     useState<number | null>(null);
+
+  const [refreshingExams, setRefreshingExams] =
+    useState(false);
 
   const toast = useToast();
 
   /**
-   * Fetch dashboard data using Supabase authentication.
+   * Check whether an exam is published.
    *
-   * IMPORTANT:
-   * Do NOT check localStorage for nexusexam_token.
-   * Supabase Auth manages the session.
+   * Supports both:
+   * - status = "PUBLISHED"
+   * - is_published = true
+   *
+   * This keeps the dashboard compatible with the
+   * current Supabase database structure.
+   */
+  const isExamPublished = useCallback((exam: any) => {
+    if (!exam) return false;
+
+    return (
+      exam.is_published === true ||
+      String(exam.status || '').toUpperCase() === 'PUBLISHED'
+    );
+  }, []);
+
+  /**
+   * Fetch dashboard data.
    */
   const fetchDashboardData = useCallback(async () => {
     if (!isAuthenticated) {
@@ -60,7 +79,84 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
       const data = await api.getStudentDashboard();
 
-      setStats(data);
+      /**
+       * Normalize exams coming from the API.
+       *
+       * If API already returns available exams,
+       * keep their attempt information.
+       */
+      const dashboardExams = Array.isArray(data?.available_exams)
+        ? data.available_exams
+        : [];
+
+      /**
+       * The API may currently filter using the old
+       * is_published field.
+       *
+       * Fetch exams directly as well so that exams
+       * using status = PUBLISHED are also visible.
+       */
+      let allExams: any[] = [];
+
+      try {
+        allExams = await api.getExams();
+      } catch (examError) {
+        console.warn(
+          '[StudentDashboard] Could not directly refresh exams:',
+          examError
+        );
+      }
+
+      /**
+       * Use direct exams when available.
+       * Otherwise fall back to dashboard exams.
+       */
+      const sourceExams =
+        allExams.length > 0
+          ? allExams
+          : dashboardExams;
+
+      /**
+       * Only show published examinations.
+       */
+      const publishedExams = sourceExams
+        .filter((exam: any) => isExamPublished(exam))
+        .map((exam: any) => {
+          /**
+           * Preserve attempt information from the
+           * dashboard API if it already exists.
+           */
+          const existingExam = dashboardExams.find(
+            (item: any) =>
+              Number(item.exam_id) === Number(exam.exam_id)
+          );
+
+          return {
+            ...exam,
+
+            is_published: true,
+
+            user_attempt_status:
+              existingExam?.user_attempt_status ?? null,
+
+            user_attempt_id:
+              existingExam?.user_attempt_id ?? null,
+
+            user_last_score:
+              existingExam?.user_last_score ?? null,
+
+            user_last_percentage:
+              existingExam?.user_last_percentage ?? null,
+
+            user_last_result_id:
+              existingExam?.user_last_result_id ?? null,
+          };
+        });
+
+      setStats({
+        ...data,
+        available_exams: publishedExams,
+      });
     } catch (err: any) {
       console.error(
         '[StudentDashboard] Failed to load dashboard:',
@@ -74,8 +170,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [isAuthenticated, toast]);
+  }, [isAuthenticated, toast, isExamPublished]);
 
+  /**
+   * Load dashboard whenever authentication changes.
+   */
   useEffect(() => {
     fetchDashboardData();
   }, [fetchDashboardData]);
@@ -129,6 +228,54 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       );
     } finally {
       setStartingExamId(null);
+    }
+  };
+
+  /**
+   * Manual refresh for published exams.
+   */
+  const handleRefreshExams = async () => {
+    if (!isAuthenticated) return;
+
+    try {
+      setRefreshingExams(true);
+
+      const exams = await api.getExams();
+
+      const publishedExams = (exams || [])
+        .filter((exam: any) => isExamPublished(exam))
+        .map((exam: any) => ({
+          ...exam,
+          is_published: true,
+        }));
+
+      setStats((previous) => {
+        if (!previous) return previous;
+
+        return {
+          ...previous,
+          available_exams: publishedExams,
+        };
+      });
+
+      toast.success(
+        `${publishedExams.length} published exam${
+          publishedExams.length === 1 ? '' : 's'
+        } found.`,
+        'Exams Refreshed'
+      );
+    } catch (err: any) {
+      console.error(
+        '[StudentDashboard] Refresh exams error:',
+        err
+      );
+
+      toast.error(
+        err?.message ||
+          'Unable to refresh examinations.'
+      );
+    } finally {
+      setRefreshingExams(false);
     }
   };
 
@@ -229,8 +376,12 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     );
   }
 
-  const activeExam = stats.available_exams.find(
-    (e) => e.user_attempt_status === 'IN_PROGRESS'
+  const availableExams = Array.isArray(stats.available_exams)
+    ? stats.available_exams
+    : [];
+
+  const activeExam = availableExams.find(
+    (e: any) => e.user_attempt_status === 'IN_PROGRESS'
   );
 
   return (
@@ -360,7 +511,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
       {/* AVAILABLE EXAMS */}
       <section className="space-y-4">
-        <div className="flex items-center justify-between">
+
+        <div className="flex items-center justify-between gap-4">
           <div className="space-y-0.5">
             <h2 className="text-xl font-bold text-white font-['Outfit'] flex items-center gap-2">
               <Layers className="w-5 h-5 text-indigo-400" />
@@ -373,14 +525,25 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             </p>
           </div>
 
-          <span className="text-xs font-mono text-indigo-300">
-            {stats.available_exams.length || 0} Published Tests
-          </span>
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-mono text-indigo-300">
+              {availableExams.length} Published Tests
+            </span>
+
+            <button
+              onClick={handleRefreshExams}
+              disabled={refreshingExams}
+              className="px-3 py-2 rounded-lg text-[11px] font-semibold bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              {refreshingExams ? 'Refreshing...' : 'Refresh'}
+            </button>
+          </div>
         </div>
 
-        {stats.available_exams.length > 0 ? (
+        {availableExams.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {stats.available_exams.map((exam) => {
+
+            {availableExams.map((exam: any) => {
               const isCompleted =
                 exam.user_attempt_status === 'SUBMITTED';
 
@@ -405,10 +568,14 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                         : 'border-white/10 hover:border-indigo-500/50'
                     }`}
                   >
+
                     <div className="space-y-3">
+
                       <div
                         className="flex items-start justify-between gap-2"
-                        style={{ transform: 'translateZ(15px)' }}
+                        style={{
+                          transform: 'translateZ(15px)',
+                        }}
                       >
                         <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-mono">
                           EXAM ID #{exam.exam_id}
@@ -433,21 +600,27 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
                       <h3
                         className="text-base font-bold text-white font-['Outfit'] line-clamp-1"
-                        style={{ transform: 'translateZ(20px)' }}
+                        style={{
+                          transform: 'translateZ(20px)',
+                        }}
                       >
                         {exam.title}
                       </h3>
 
                       <p
                         className="text-xs text-slate-300 line-clamp-2 leading-relaxed"
-                        style={{ transform: 'translateZ(10px)' }}
+                        style={{
+                          transform: 'translateZ(10px)',
+                        }}
                       >
-                        {exam.description}
+                        {exam.description || 'No description available.'}
                       </p>
 
                       <div
                         className="grid grid-cols-3 gap-2 pt-2 border-t border-white/5 text-[11px] text-slate-300 font-mono"
-                        style={{ transform: 'translateZ(12px)' }}
+                        style={{
+                          transform: 'translateZ(12px)',
+                        }}
                       >
                         <div className="p-2 rounded-lg bg-white/[0.02]">
                           <span className="block text-[10px] text-slate-400">
@@ -455,7 +628,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                           </span>
 
                           <span className="font-bold text-white">
-                            {exam.duration_minutes} Mins
+                            {exam.duration_minutes || 0} Mins
                           </span>
                         </div>
 
@@ -465,7 +638,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                           </span>
 
                           <span className="font-bold text-white">
-                            {exam.total_marks} Pts
+                            {exam.total_marks || 0} Pts
                           </span>
                         </div>
 
@@ -475,13 +648,14 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                           </span>
 
                           <span className="font-bold text-emerald-400">
-                            {exam.passing_percentage}%
+                            {exam.passing_percentage || 0}%
                           </span>
                         </div>
                       </div>
 
                       {isCompleted &&
-                        exam.user_last_score !== null && (
+                        exam.user_last_score !== null &&
+                        exam.user_last_score !== undefined && (
                           <div
                             className="p-2.5 rounded-xl bg-emerald-950/40 border border-emerald-500/30 flex items-center justify-between text-xs font-semibold"
                             style={{
@@ -506,6 +680,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                         transform: 'translateZ(20px)',
                       }}
                     >
+
                       {isInProgress ? (
                         <button
                           onClick={() =>
@@ -521,6 +696,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                         </button>
                       ) : isCompleted ? (
                         <div className="flex items-center gap-2">
+
                           <button
                             onClick={() =>
                               onNavigate(
@@ -554,6 +730,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                               }`}
                             />
                           </button>
+
                         </div>
                       ) : (
                         <button
@@ -572,29 +749,47 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                             : 'Start Examination'}
                         </button>
                       )}
+
                     </div>
                   </div>
                 </TiltCard>
               );
             })}
+
           </div>
         ) : (
           <div className="p-8 rounded-2xl glass-card border border-white/10 text-center space-y-3">
-            <p className="text-xs text-slate-400">
+
+            <Layers className="w-8 h-8 text-indigo-400 mx-auto" />
+
+            <p className="text-sm text-slate-300">
               No published examinations are available yet.
             </p>
 
             <p className="text-xs text-slate-500">
-              Please check back when your teacher publishes an
-              examination.
+              Ask your teacher to publish an examination, then
+              click Refresh.
             </p>
+
+            <button
+              onClick={handleRefreshExams}
+              disabled={refreshingExams}
+              className="px-4 py-2 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              {refreshingExams
+                ? 'Checking...'
+                : 'Check for Exams'}
+            </button>
+
           </div>
         )}
       </section>
 
       {/* RECENT RESULTS */}
       <section className="space-y-4">
+
         <div className="flex items-center justify-between">
+
           <div className="space-y-0.5">
             <h2 className="text-xl font-bold text-white font-['Outfit'] flex items-center gap-2">
               <FileText className="w-5 h-5 text-cyan-400" />
@@ -616,15 +811,21 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             Full Analytics
             <ChevronRight className="w-3.5 h-3.5" />
           </button>
+
         </div>
 
         {stats.recent_results &&
         stats.recent_results.length > 0 ? (
+
           <div className="glass-panel rounded-2xl border border-white/10 overflow-hidden">
+
             <div className="overflow-x-auto">
+
               <table className="w-full text-left text-xs">
+
                 <thead className="bg-white/5 text-slate-400 font-mono border-b border-white/10">
                   <tr>
+
                     <th className="py-3.5 px-4 font-semibold">
                       EXAM TITLE
                     </th>
@@ -648,15 +849,19 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     <th className="py-3.5 px-4 text-right font-semibold">
                       ACTION
                     </th>
+
                   </tr>
                 </thead>
 
                 <tbody className="divide-y divide-white/5 text-slate-200">
+
                   {stats.recent_results.map((res) => (
+
                     <tr
                       key={res.result_id}
                       className="hover:bg-white/[0.02] transition-colors"
                     >
+
                       <td className="py-3.5 px-4 font-semibold text-white font-['Outfit']">
                         {res.exam_title}
                       </td>
@@ -670,6 +875,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       </td>
 
                       <td className="py-3.5 px-4">
+
                         <span
                           className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
                             res.pass_status === 'PASSED'
@@ -679,9 +885,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                         >
                           {res.pass_status}
                         </span>
+
                       </td>
 
                       <td className="py-3.5 px-4 text-slate-400 font-mono text-[11px]">
+
                         {new Date(
                           res.created_at
                         ).toLocaleDateString()}{' '}
@@ -692,15 +900,18 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                           hour: '2-digit',
                           minute: '2-digit',
                         })}
+
                       </td>
 
                       <td className="py-3.5 px-4 text-right">
+
                         <button
                           onClick={() =>
                             onNavigate(
                               'result-analysis',
                               {
-                                resultId: res.result_id,
+                                resultId:
+                                  res.result_id,
                               }
                             )
                           }
@@ -708,24 +919,34 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                         >
                           View Breakdown
                         </button>
+
                       </td>
+
                     </tr>
+
                   ))}
+
                 </tbody>
+
               </table>
+
             </div>
+
           </div>
+
         ) : (
+
           <div className="p-8 rounded-2xl glass-card border border-white/10 text-center space-y-3">
+
             <p className="text-xs text-slate-400">
               You haven't completed any examinations yet.
             </p>
 
             <button
               onClick={() => {
-                if (stats.available_exams.length > 0) {
+                if (availableExams.length > 0) {
                   handleStartOrResumeExam(
-                    stats.available_exams[0].exam_id
+                    availableExams[0].exam_id
                   );
                 } else {
                   toast.info(
@@ -738,9 +959,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             >
               Start Your First Exam
             </button>
+
           </div>
+
         )}
+
       </section>
+
     </div>
   );
 };
