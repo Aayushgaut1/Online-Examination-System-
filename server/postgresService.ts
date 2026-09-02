@@ -22,6 +22,16 @@ export class PostgresService {
     };
   }
 
+  public async listUsers(): Promise<Omit<UserRow, 'password_hash'>[]> {
+    const { data, error } = await supabaseAdmin
+      .from('users')
+      .select('user_id, name, email, role, created_at')
+      .order('user_id', { ascending: true });
+
+    if (error || !data) return [];
+    return data;
+  }
+
   public async findUserById(userId: number): Promise<UserRow | null> {
     const { data, error } = await supabaseAdmin
       .from('users')

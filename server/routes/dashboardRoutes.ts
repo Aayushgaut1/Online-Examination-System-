@@ -1,4 +1,5 @@
 import { Router, Response } from 'express';
+import fs from 'fs';
 import { db } from '../db.js';
 import { postgresAdapter } from '../postgresAdapter.js';
 import { postgresService } from '../postgresService.js';
@@ -254,6 +255,14 @@ router.get('/database/status', async (req: AuthRequest, res: Response) => {
       result: db.results.length
     };
 
+    let lastSavedAt = new Date().toISOString();
+    try {
+      if (fs.existsSync('data/examination.db.json')) {
+        const stats = fs.statSync('data/examination.db.json');
+        lastSavedAt = stats.mtime.toISOString();
+      }
+    } catch (_) {}
+
     return res.json({
       status: 'ONLINE',
       engine: db.isUsingMySQL ? 'MySQL (External Server Pool)' : 'Persistent Relational SQL Engine (ACID JSON Storage)',
@@ -261,6 +270,8 @@ router.get('/database/status', async (req: AuthRequest, res: Response) => {
       is_postgres: false,
       table_counts: tableCounts,
       database_name: 'online_exam_db',
+      file_path: 'data/examination.db.json',
+      last_saved_at: lastSavedAt,
       schema_tables: [
         { name: 'users', rows: db.users.length, columns: ['user_id (PK)', 'name', 'email (UQ)', 'password_hash', 'role', 'created_at'] },
         { name: 'student', rows: db.students.length, columns: ['student_id (PK)', 'user_id (FK)', 'name', 'email (UQ)', 'roll_no (UQ)', 'created_at'] },
@@ -274,6 +285,67 @@ router.get('/database/status', async (req: AuthRequest, res: Response) => {
     });
   } catch (err: any) {
     return res.status(500).json({ error: 'Failed to inspect database status.' });
+  }
+});
+
+// GET /api/database/records/:table - Live data viewer for inspection
+router.get('/database/records/:table', async (req: AuthRequest, res: Response) => {
+  try {
+    const table = req.params.table.toLowerCase();
+
+    if (postgresAdapter.isConnected) {
+      if (table === 'users') {
+        const users = await postgresService.listUsers();
+        return res.json({ table, count: users.length, rows: users });
+      } else if (table === 'student') {
+        const students = await postgresService.listStudents();
+        return res.json({ table, count: students.length, rows: students });
+      } else if (table === 'exam') {
+        const exams = await postgresService.listExams(true);
+        return res.json({ table, count: exams.length, rows: exams });
+      }
+    }
+
+    let rows: any[] = [];
+    switch (table) {
+      case 'users':
+        rows = db.users.map(({ password_hash, ...u }) => ({
+          ...u,
+          password_hash: '[PROTECTED_BCRYPT_HASH]'
+        }));
+        break;
+      case 'student':
+        rows = db.students;
+        break;
+      case 'exam':
+        rows = db.exams;
+        break;
+      case 'question':
+        rows = db.questions;
+        break;
+      case 'option':
+        rows = db.options;
+        break;
+      case 'attempt':
+        rows = db.attempts;
+        break;
+      case 'answer':
+        rows = db.answers;
+        break;
+      case 'result':
+        rows = db.results;
+        break;
+      default:
+        return res.status(400).json({ error: `Unknown table: ${table}` });
+    }
+
+    return res.json({
+      table,
+      count: rows.length,
+      rows: rows.slice(-50) // Return up to 50 most recent records
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Failed to fetch table records.' });
   }
 });
 

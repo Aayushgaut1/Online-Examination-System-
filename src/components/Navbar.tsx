@@ -119,9 +119,11 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate }) => {
             <button
               onClick={() => setDbModalOpen(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-cyan-300 hover:bg-cyan-500/10 transition-all border border-cyan-500/20"
+              title="Inspect live database tables, schema, and persistent ACID records"
             >
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
               <Database className="w-3.5 h-3.5" />
-              Supabase Schema
+              Database
             </button>
           </nav>
 
@@ -297,9 +299,11 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onNavigate }) => {
                   setDbModalOpen(true);
                   setMobileMenuOpen(false);
                 }}
-                className="w-full text-left px-3 py-2 rounded-lg text-sm text-cyan-300 font-semibold"
+                className="w-full flex items-center gap-2 text-left px-3 py-2 rounded-lg text-sm text-cyan-300 font-semibold"
               >
-                View Supabase Schema
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <Database className="w-4 h-4" />
+                Live Database Inspector
               </button>
             </motion.div>
           )}

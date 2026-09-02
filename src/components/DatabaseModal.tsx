@@ -1,6 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Database, X, RefreshCw, Layers, CheckCircle2, ShieldAlert, Cpu, PlusCircle } from 'lucide-react';
+import {
+  Database,
+  X,
+  RefreshCw,
+  CheckCircle2,
+  PlusCircle,
+  HardDrive,
+  Clock,
+  FileText
+} from 'lucide-react';
 import { api } from '../services/api';
 import { useToast } from '../context/ToastContext';
 
@@ -12,7 +21,10 @@ interface DatabaseModalProps {
 export const DatabaseModal: React.FC<DatabaseModalProps> = ({ isOpen, onClose }) => {
   const [dbData, setDbData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<'schema' | 'er' | 'tables'>('schema');
+  const [activeTab, setActiveTab] = useState<'schema' | 'records' | 'tables' | 'er'>('schema');
+  const [selectedTable, setSelectedTable] = useState<string>('users');
+  const [recordsData, setRecordsData] = useState<{ table: string; count: number; rows: any[] } | null>(null);
+  const [loadingRecords, setLoadingRecords] = useState(false);
   const [resetting, setResetting] = useState(false);
   const toast = useToast();
 
@@ -28,11 +40,30 @@ export const DatabaseModal: React.FC<DatabaseModalProps> = ({ isOpen, onClose })
     }
   };
 
+  const fetchRecords = async (table: string) => {
+    try {
+      setLoadingRecords(true);
+      setSelectedTable(table);
+      const data = await api.getDatabaseRecords(table);
+      setRecordsData(data);
+    } catch (err: any) {
+      toast.error('Failed to load table records');
+    } finally {
+      setLoadingRecords(false);
+    }
+  };
+
   useEffect(() => {
     if (isOpen) {
       fetchStatus();
     }
   }, [isOpen]);
+
+  useEffect(() => {
+    if (isOpen && activeTab === 'records') {
+      fetchRecords(selectedTable);
+    }
+  }, [isOpen, activeTab, selectedTable]);
 
   const handleResetSeed = async () => {
     if (!window.confirm('Are you sure you want to reset all test exams, questions, and attempt records to default sample state?')) {
@@ -43,6 +74,9 @@ export const DatabaseModal: React.FC<DatabaseModalProps> = ({ isOpen, onClose })
       await api.resetSeedDatabase();
       toast.success('Database has been reset and re-seeded with fresh sample data!');
       await fetchStatus();
+      if (activeTab === 'records') {
+        await fetchRecords(selectedTable);
+      }
     } catch (err: any) {
       toast.error('Reset failed: ' + err.message);
     } finally {
@@ -51,7 +85,7 @@ export const DatabaseModal: React.FC<DatabaseModalProps> = ({ isOpen, onClose })
   };
 
   const handleCreateNewDatabase = async () => {
-    if (!window.confirm('Create a new clean database? This will re-initialize all 8 relational tables (USERS, STUDENT, EXAM, QUESTION, OPTION, ATTEMPT, ANSWER, RESULT) with clean sequences and standard seed schemas.')) {
+    if (!window.confirm('Create a new clean database? This will re-initialize all 8 relational tables with clean sequences.')) {
       return;
     }
     try {
@@ -59,6 +93,9 @@ export const DatabaseModal: React.FC<DatabaseModalProps> = ({ isOpen, onClose })
       await api.recreateDatabase();
       toast.success('New database created and initialized successfully!');
       await fetchStatus();
+      if (activeTab === 'records') {
+        await fetchRecords(selectedTable);
+      }
     } catch (err: any) {
       toast.error('Failed to create new database: ' + err.message);
     } finally {
@@ -85,7 +122,7 @@ export const DatabaseModal: React.FC<DatabaseModalProps> = ({ isOpen, onClose })
           initial={{ opacity: 0, scale: 0.95, y: 20 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.95, y: 20 }}
-          className="relative w-full max-w-4xl glass-panel rounded-2xl border border-white/10 shadow-2xl p-6 sm:p-8 z-10 my-8 max-h-[90vh] flex flex-col"
+          className="relative w-full max-w-5xl glass-panel rounded-2xl border border-white/10 shadow-2xl p-6 sm:p-8 z-10 my-8 max-h-[90vh] flex flex-col"
         >
           {/* Header */}
           <div className="flex items-start justify-between pb-4 border-b border-white/10">
@@ -95,26 +132,54 @@ export const DatabaseModal: React.FC<DatabaseModalProps> = ({ isOpen, onClose })
               </div>
               <div>
                 <h3 className="text-xl font-bold text-white font-['Outfit'] flex items-center gap-2">
-                  Database & ER Architecture
+                  Database & Persistence Inspector
                   <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
-                    ONLINE
+                    LIVE & PERSISTED
                   </span>
                 </h3>
-                <p className="text-xs text-slate-400 font-mono">
-                  Schema: <span className="text-indigo-300 font-semibold">{dbData?.database_name || 'online_exam_db'}</span> • Engine: {dbData?.engine || 'Relational SQL Engine'}
-                </p>
+                <div className="flex flex-wrap items-center gap-3 text-xs text-slate-400 font-mono mt-1">
+                  <span className="flex items-center gap-1 text-indigo-300">
+                    <HardDrive className="w-3.5 h-3.5" />
+                    {dbData?.engine || 'Persistent ACID Relational Engine'}
+                  </span>
+                  {dbData?.file_path && (
+                    <span className="text-slate-500 hidden sm:inline">
+                      • Storage: <span className="text-slate-300">{dbData.file_path}</span>
+                    </span>
+                  )}
+                  {dbData?.last_saved_at && (
+                    <span className="flex items-center gap-1 text-emerald-400">
+                      <Clock className="w-3.5 h-3.5" />
+                      Disk Synced: {new Date(dbData.last_saved_at).toLocaleTimeString()}
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
-            <button
-              onClick={onClose}
-              className="text-slate-400 hover:text-white p-1.5 rounded-lg bg-white/5 hover:bg-white/10 transition-colors"
-            >
-              <X className="w-5 h-5" />
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  fetchStatus();
+                  if (activeTab === 'records') fetchRecords(selectedTable);
+                  toast.success('Database status reloaded!');
+                }}
+                disabled={loading}
+                title="Reload Database State"
+                className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white transition-colors cursor-pointer"
+              >
+                <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-indigo-400' : ''}`} />
+              </button>
+              <button
+                onClick={onClose}
+                className="text-slate-400 hover:text-white p-2 rounded-lg bg-white/5 hover:bg-white/10 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
           </div>
 
           {/* Navigation Tabs */}
-          <div className="flex items-center gap-2 mt-4 pb-2 border-b border-white/5">
+          <div className="flex flex-wrap items-center gap-2 mt-4 pb-2 border-b border-white/5">
             <button
               onClick={() => setActiveTab('schema')}
               className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
@@ -126,14 +191,18 @@ export const DatabaseModal: React.FC<DatabaseModalProps> = ({ isOpen, onClose })
               Schema & Table Counts
             </button>
             <button
-              onClick={() => setActiveTab('er')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                activeTab === 'er'
+              onClick={() => {
+                setActiveTab('records');
+                fetchRecords(selectedTable);
+              }}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                activeTab === 'records'
                   ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30'
                   : 'text-slate-400 hover:text-white hover:bg-white/5'
               }`}
             >
-              ER Diagram Map
+              <FileText className="w-3.5 h-3.5" />
+              Live Table Records Explorer
             </button>
             <button
               onClick={() => setActiveTab('tables')}
@@ -145,6 +214,16 @@ export const DatabaseModal: React.FC<DatabaseModalProps> = ({ isOpen, onClose })
             >
               Table Columns & Constraints
             </button>
+            <button
+              onClick={() => setActiveTab('er')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                activeTab === 'er'
+                  ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30'
+                  : 'text-slate-400 hover:text-white hover:bg-white/5'
+              }`}
+            >
+              ER Diagram Map
+            </button>
           </div>
 
           {/* Content Area */}
@@ -154,21 +233,114 @@ export const DatabaseModal: React.FC<DatabaseModalProps> = ({ isOpen, onClose })
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   {dbData?.table_counts &&
                     Object.entries(dbData.table_counts).map(([table, count]: any) => (
-                      <div key={table} className="p-3.5 rounded-xl bg-white/[0.03] border border-white/5 flex flex-col">
-                        <span className="text-xs font-mono text-slate-400 uppercase">{table}</span>
+                      <div
+                        key={table}
+                        onClick={() => {
+                          setSelectedTable(table);
+                          setActiveTab('records');
+                        }}
+                        className="p-3.5 rounded-xl bg-white/[0.03] hover:bg-white/[0.07] border border-white/5 hover:border-indigo-500/30 flex flex-col cursor-pointer transition-all group"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-mono text-slate-400 uppercase group-hover:text-indigo-300 transition-colors">
+                            {table}
+                          </span>
+                          <span className="text-[10px] text-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity">
+                            View rows →
+                          </span>
+                        </div>
                         <span className="text-2xl font-bold text-white font-['Outfit'] mt-1">{count}</span>
                         <span className="text-[10px] text-indigo-300 mt-0.5">Records stored</span>
                       </div>
                     ))}
                 </div>
 
-                <div className="p-4 rounded-xl bg-indigo-950/40 border border-indigo-500/20 text-xs text-indigo-200 leading-relaxed">
-                  <div className="flex items-center gap-2 font-bold mb-1 text-white">
+                <div className="p-4 rounded-xl bg-indigo-950/40 border border-indigo-500/20 text-xs text-indigo-200 leading-relaxed space-y-2">
+                  <div className="flex items-center gap-2 font-bold text-white">
                     <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                    ACID Relational Integrity Guaranteed
+                    ACID Persistence Layer Active
                   </div>
-                  All primary keys, foreign key cascading constraints, unique indexes (student roll numbers and emails), and 1:1 attempt-result uniqueness are strictly enforced at the backend and database layer.
+                  <p>
+                    Every registration, exam creation, question update, attempt start, answer recording, and exam grading is written immediately to disk with full integrity.
+                  </p>
+                  <p className="text-[11px] text-slate-400">
+                    To integrate an external Supabase or PostgreSQL/MySQL cloud database, configure <code className="text-indigo-300">DATABASE_URL</code> or <code className="text-indigo-300">SUPABASE_URL</code> & <code className="text-indigo-300">SUPABASE_SERVICE_ROLE_KEY</code> in project environment variables.
+                  </p>
                 </div>
+              </div>
+            )}
+
+            {activeTab === 'records' && (
+              <div className="space-y-3">
+                {/* Table selector buttons */}
+                <div className="flex flex-wrap gap-2 pb-2 border-b border-white/5">
+                  {['users', 'student', 'exam', 'question', 'option', 'attempt', 'answer', 'result'].map(tbl => {
+                    const count = dbData?.table_counts?.[tbl] ?? 0;
+                    return (
+                      <button
+                        key={tbl}
+                        onClick={() => fetchRecords(tbl)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-mono font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
+                          selectedTable === tbl
+                            ? 'bg-indigo-600 text-white shadow-md'
+                            : 'bg-white/5 text-slate-300 hover:bg-white/10'
+                        }`}
+                      >
+                        <span className="uppercase">{tbl}</span>
+                        <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-black/40 text-slate-300">
+                          {count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Records table */}
+                {loadingRecords ? (
+                  <div className="py-12 text-center text-slate-400 flex items-center justify-center gap-2">
+                    <RefreshCw className="w-4 h-4 animate-spin text-indigo-400" />
+                    <span>Loading {selectedTable} records...</span>
+                  </div>
+                ) : recordsData && recordsData.rows && recordsData.rows.length > 0 ? (
+                  <div className="overflow-x-auto rounded-xl border border-white/10 bg-black/30">
+                    <table className="w-full text-left text-xs font-mono">
+                      <thead className="bg-white/5 border-b border-white/10 text-slate-400">
+                        <tr>
+                          {Object.keys(recordsData.rows[0]).map(col => (
+                            <th key={col} className="p-2.5 whitespace-nowrap font-bold text-slate-300">
+                              {col}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/5 text-slate-200">
+                        {recordsData.rows.map((row: any, idx: number) => (
+                          <tr key={idx} className="hover:bg-white/[0.03] transition-colors">
+                            {Object.entries(row).map(([key, val]: any, cIdx: number) => (
+                              <td key={cIdx} className="p-2.5 whitespace-nowrap max-w-xs truncate text-[11px]">
+                                {typeof val === 'boolean' ? (
+                                  <span className={`px-1.5 py-0.5 rounded text-[10px] ${val ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'}`}>
+                                    {String(val)}
+                                  </span>
+                                ) : typeof val === 'object' && val !== null ? (
+                                  JSON.stringify(val)
+                                ) : val === null || val === undefined ? (
+                                  <span className="text-slate-600 italic">null</span>
+                                ) : (
+                                  String(val)
+                                )}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="py-12 text-center text-slate-400 bg-white/[0.02] rounded-xl border border-white/5">
+                    No records found in table <code className="text-indigo-400">{selectedTable}</code>.
+                  </div>
+                )}
               </div>
             )}
 

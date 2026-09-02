@@ -31,6 +31,22 @@
       "password_hash": "$2b$10$2l.TQMbl.VyZOMsC2YwsTO/kMqtQ/ffm1eU/Wq2GszVKQR47CFFOO",
       "role": "STUDENT",
       "created_at": "2026-09-02T16:18:06.525Z"
+    },
+    {
+      "user_id": 10,
+      "name": "kaif",
+      "email": "md.kaif.tanveer@gmail.com",
+      "password_hash": "$2b$10$X1JJGGn/Hfa51roZrUs9YOP7cw35sqtnAVuKjQmtBRVSRAdoQ/cQm",
+      "role": "STUDENT",
+      "created_at": "2026-09-02T17:28:47.053Z"
+    },
+    {
+      "user_id": 11,
+      "name": "Test User",
+      "email": "testuser@example.com",
+      "password_hash": "$2b$10$Zx/xcEX32p9iw2Dl70Bi0OH7xFUK8TmLB7CCU3SYVpdGA7p6JDqay",
+      "role": "STUDENT",
+      "created_at": "2026-09-02T17:42:06.090Z"
     }
   ],
   "student": [
@@ -57,6 +73,22 @@
       "email": "liam.davis@student.edu",
       "roll_no": "CS2026-102",
       "created_at": "2026-09-02T16:18:06.525Z"
+    },
+    {
+      "student_id": 10,
+      "user_id": 10,
+      "name": "kaif",
+      "email": "md.kaif.tanveer@gmail.com",
+      "roll_no": "RA23",
+      "created_at": "2026-09-02T17:28:47.053Z"
+    },
+    {
+      "student_id": 11,
+      "user_id": 11,
+      "name": "Test User",
+      "email": "testuser@example.com",
+      "roll_no": "TEST-001",
+      "created_at": "2026-09-02T17:42:06.090Z"
     }
   ],
   "exam": [
@@ -1636,8 +1668,8 @@
     }
   ],
   "sequences": {
-    "users": 10,
-    "student": 10,
+    "users": 12,
+    "student": 12,
     "exam": 11,
     "question": 43,
     "option": 154,

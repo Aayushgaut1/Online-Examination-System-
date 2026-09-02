@@ -24,12 +24,29 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     ...(options.headers || {})
   };
 
-  const response = await fetch(`${BASE_URL}${endpoint}`, {
-    ...options,
-    headers
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${BASE_URL}${endpoint}`, {
+      ...options,
+      headers
+    });
+  } catch (err: any) {
+    console.error(`[API Network Error] ${endpoint}:`, err);
+    throw new Error(
+      'Network Connection Error: Could not reach the server. Please verify your internet connection or ensure the server is running.'
+    );
+  }
 
-  const data = await response.json().catch(() => ({}));
+  const contentType = response.headers.get('content-type') || '';
+  let data: any = {};
+  if (contentType.includes('application/json')) {
+    data = await response.json().catch(() => ({}));
+  } else {
+    const rawText = await response.text().catch(() => '');
+    if (rawText.includes('__cookie_check') || response.status === 302) {
+      throw new Error('Access session gateway required. Please reload the application in your browser.');
+    }
+  }
 
   if (!response.ok) {
     const errorMessage = data?.error || data?.message || `Request failed with status ${response.status}`;
@@ -198,11 +215,17 @@ export const api = {
     is_supabase?: boolean;
     table_counts: Record<string, number>;
     database_name: string;
+    file_path?: string;
+    last_saved_at?: string;
     supabase_project_ref?: string;
     supabase_url?: string;
     schema_tables: Array<{ name: string; rows: number; columns: string[] }>;
   }> {
     return await request('/database/status');
+  },
+
+  async getDatabaseRecords(table: string): Promise<{ table: string; count: number; rows: any[] }> {
+    return await request(`/database/records/${table}`);
   },
 
   async resetSeedDatabase(): Promise<{ message: string }> {
