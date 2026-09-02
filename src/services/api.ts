@@ -407,7 +407,7 @@ export const api = {
         .from(tbl)
         .select('*')
         .eq('exam_id', examId)
-        .order('order_num', { ascending: true });
+        .order('question_order', { ascending: true });
     });
 
     if (qRes.error) {
