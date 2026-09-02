@@ -1,0 +1,6 @@
+{
+  "name": "NexusExam - Online Examination System",
+  "description": "A production-grade, 3D modern online examination platform featuring real-time timers, automatic grading, relational data integrity, and teacher/student analytics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
