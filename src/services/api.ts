@@ -344,172 +344,59 @@ export const api = {
   // --------------------------------------------------------------------------
   // EXAMS (Direct Supabase SELECT, INSERT, UPDATE, DELETE)
   // --------------------------------------------------------------------------
-  async getExams(): Promise<Exam[]> {
-    const res = await selectFromTable<Exam[]>('exams', 'exam', async (tbl) => {
+ async getExams(): Promise<Exam[]> {
+  const res = await selectFromTable<any[]>(
+    'exams',
+    'exam',
+    async (tbl) => {
       return await supabase
         .from(tbl)
         .select('*')
-        .order('created_at', { ascending: false });
-    });
-
-    if (res.error) {
-      handleSupabaseError(res.error, 'Failed to fetch exams');
+        .order('exam_id', { ascending: true });
     }
+  );
 
-    const exams: Exam[] = res.data || [];
+  if (res.error) {
+    handleSupabaseError(
+      res.error,
+      'Failed to fetch exams'
+    );
+  }
 
-    // Query question counts for each exam
-    for (const exam of exams) {
-      const qRes = await selectFromTable('questions', 'question', async (qTbl) => {
+  const exams: Exam[] = (res.data || []).map(
+    (exam: any) => ({
+      ...exam,
+
+      // Database uses status = PUBLISHED
+      // Frontend also understands is_published
+      is_published:
+        exam.is_published === true ||
+        String(exam.status || '').toUpperCase() ===
+          'PUBLISHED',
+    })
+  );
+
+  // Count questions
+  for (const exam of exams) {
+    const qRes = await selectFromTable(
+      'questions',
+      'question',
+      async (qTbl) => {
         return await supabase
           .from(qTbl)
-          .select('question_id', { count: 'exact', head: true })
+          .select('question_id', {
+            count: 'exact',
+            head: true,
+          })
           .eq('exam_id', exam.exam_id);
-      });
-      exam.question_count = qRes.count ?? 0;
-    }
-
-    return exams;
-  },
-
-  async getExamById(id: number): Promise<Exam & { questions?: Question[] }> {
-    const res = await selectFromTable<Exam>('exams', 'exam', async (tbl) => {
-      return await supabase
-        .from(tbl)
-        .select('*')
-        .eq('exam_id', id)
-        .single();
-    });
-
-    if (res.error || !res.data) {
-      handleSupabaseError(res.error || { message: 'Exam not found' }, `Exam #${id} not found`);
-    }
-
-    const exam = res.data;
-    const questions = await this.getExamQuestions(id);
-    return {
-      ...exam,
-      question_count: questions.length,
-      questions
-    };
-  },
-
-  async createExam(examData: Partial<Exam> & { questions?: any[] }): Promise<{ message: string; exam: Exam }> {
-    const { questions, ...examFields } = examData;
-
-    // Get current user ID
-    let createdBy = examFields.created_by;
-    if (!createdBy) {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user?.email) {
-        const { data: u } = await supabase.from('users').select('user_id').ilike('email', user.email).maybeSingle();
-        if (u) createdBy = u.user_id;
       }
-    }
+    );
 
-    const payload = {
-      title: examFields.title || 'Untitled Exam',
-      description: examFields.description || '',
-      duration_minutes: Number(examFields.duration_minutes) || 30,
-      total_marks: Number(examFields.total_marks) || 100,
-      passing_percentage: Number(examFields.passing_percentage) || 40,
-      is_published: examFields.is_published ?? true,
-      created_by: createdBy || 1,
-      created_at: new Date().toISOString()
-    };
+    exam.question_count = qRes.count ?? 0;
+  }
 
-    const res = await selectFromTable<Exam>('exams', 'exam', async (tbl) => {
-      return await supabase
-        .from(tbl)
-        .insert(payload)
-        .select()
-        .single();
-    });
-
-    if (res.error || !res.data) {
-      handleSupabaseError(res.error || { message: 'Failed to insert exam' }, 'Failed to create exam');
-    }
-
-    const newExam = res.data;
-
-    // If initial questions provided, insert them into questions and options tables
-    if (Array.isArray(questions) && questions.length > 0) {
-      for (let i = 0; i < questions.length; i++) {
-        const q = questions[i];
-        await this.addQuestion(newExam.exam_id, {
-          question_text: q.question_text || q.text || `Question ${i + 1}`,
-          marks: Number(q.marks) || 1,
-          options: q.options || []
-        });
-      }
-    }
-
-    return {
-      message: 'Exam created successfully in Supabase',
-      exam: newExam
-    };
-  },
-
-  async updateExam(id: number, examData: Partial<Exam>): Promise<{ message: string; exam: Exam }> {
-    const res = await selectFromTable<Exam>('exams', 'exam', async (tbl) => {
-      return await supabase
-        .from(tbl)
-        .update({
-          ...examData,
-          updated_at: new Date().toISOString()
-        })
-        .eq('exam_id', id)
-        .select()
-        .single();
-    });
-
-    if (res.error || !res.data) {
-      handleSupabaseError(res.error, `Failed to update exam #${id}`);
-    }
-
-    return {
-      message: 'Exam updated successfully',
-      exam: res.data
-    };
-  },
-
-  async togglePublishExam(id: number): Promise<{ message: string; is_published: boolean }> {
-    const current = await this.getExamById(id);
-    const newStatus = !current.is_published;
-
-    const res = await selectFromTable<Exam>('exams', 'exam', async (tbl) => {
-      return await supabase
-        .from(tbl)
-        .update({ is_published: newStatus, updated_at: new Date().toISOString() })
-        .eq('exam_id', id)
-        .select()
-        .single();
-    });
-
-    if (res.error || !res.data) {
-      handleSupabaseError(res.error, `Failed to toggle publish status on exam #${id}`);
-    }
-
-    return {
-      message: newStatus ? 'Exam published to students' : 'Exam saved as draft',
-      is_published: newStatus
-    };
-  },
-
-  async deleteExam(id: number): Promise<{ message: string }> {
-    const res = await selectFromTable('exams', 'exam', async (tbl) => {
-      return await supabase
-        .from(tbl)
-        .delete()
-        .eq('exam_id', id);
-    });
-
-    if (res.error) {
-      handleSupabaseError(res.error, `Failed to delete exam #${id}`);
-    }
-
-    return { message: `Exam #${id} deleted successfully` };
-  },
+  return exams;
+}
 
   // --------------------------------------------------------------------------
   // QUESTIONS & OPTIONS
@@ -1210,121 +1097,109 @@ export const api = {
   // DASHBOARDS
   // --------------------------------------------------------------------------
   async getStudentDashboard(): Promise<StudentDashboardStats> {
-    const me = await this.getMe();
-    if (!me.student) {
-      throw new Error('Student profile not found');
-    }
+  const me = await this.getMe();
 
-    const student = me.student;
-   const availableExams = (await this.getExams()).filter(
-  (e) => e.status === 'PUBLISHED'
-);
-    const recentResults = await this.getStudentResults(student.student_id);
+  if (!me.student) {
+    throw new Error('Student profile not found');
+  }
 
-    // Annotate exams with student's attempt status
-    for (const exam of availableExams) {
-      const attRes = await selectFromTable<Attempt>('attempts', 'attempt', async (tbl) => {
+  const student = me.student;
+
+  // Get ALL exams from Supabase
+  const allExams = await this.getExams();
+
+  // Your database uses status = PUBLISHED
+  const availableExams = allExams.filter((exam: any) => {
+    return (
+      String(exam.status || '').toUpperCase() === 'PUBLISHED' ||
+      exam.is_published === true
+    );
+  });
+
+  const recentResults =
+    await this.getStudentResults(student.student_id);
+
+  // Add student's attempt information
+  for (const exam of availableExams) {
+    const attRes = await selectFromTable<Attempt>(
+      'attempts',
+      'attempt',
+      async (tbl) => {
         return await supabase
           .from(tbl)
           .select('*')
           .eq('exam_id', exam.exam_id)
           .eq('student_id', student.student_id)
           .order('created_at', { ascending: false })
+          .limit(1)
           .maybeSingle();
-      });
+      }
+    );
 
-      if (attRes.data) {
-        exam.user_attempt_status = attRes.data.status;
-        exam.user_attempt_id = attRes.data.attempt_id;
+    if (attRes.data) {
+      exam.user_attempt_status = attRes.data.status;
+      exam.user_attempt_id = attRes.data.attempt_id;
 
-        const resRes = await selectFromTable<Result>('results', 'result', async (tbl) => {
+      const resRes = await selectFromTable<Result>(
+        'results',
+        'result',
+        async (tbl) => {
           return await supabase
             .from(tbl)
             .select('*')
-            .eq('attempt_id', attRes.data.attempt_id)
+            .eq('attempt_id', attRes.data!.attempt_id)
             .maybeSingle();
-        });
-
-        if (resRes.data) {
-          exam.user_last_score = resRes.data.score;
-          exam.user_last_percentage = resRes.data.percentage;
-          exam.user_last_result_id = resRes.data.result_id;
         }
+      );
+
+      if (resRes.data) {
+        exam.user_last_score = resRes.data.score;
+        exam.user_last_percentage = resRes.data.percentage;
+        exam.user_last_result_id = resRes.data.result_id;
       }
     }
+  }
 
-    const total = recentResults.length;
-    const passCount = recentResults.filter((r) => r.pass_status === 'PASSED').length;
-    const failCount = total - passCount;
-    const avgScore = total > 0 ? recentResults.reduce((acc, r) => acc + Number(r.score), 0) / total : 0;
-    const avgPct = total > 0 ? recentResults.reduce((acc, r) => acc + Number(r.percentage), 0) / total : 0;
+  const total = recentResults.length;
 
-    return {
-      student,
-      total_attempts: total,
-      completed_exams: total,
-      average_score: Math.round(avgScore * 10) / 10,
-      average_percentage: Math.round(avgPct * 10) / 10,
-      pass_count: passCount,
-      fail_count: failCount,
-      pass_rate: total > 0 ? Math.round((passCount / total) * 100) : 0,
-      recent_results: recentResults.slice(0, 5),
-      available_exams: availableExams
-    };
-  },
+  const passCount = recentResults.filter(
+    (r) => r.pass_status === 'PASSED'
+  ).length;
 
-  async getTeacherDashboard(): Promise<TeacherDashboardStats> {
-    const exams = await this.getExams();
-    const students = await this.getStudents();
+  const failCount = total - passCount;
 
-    const attRes = await selectFromTable<Attempt[]>('attempts', 'attempt', async (tbl) => {
-      return await supabase
-        .from(tbl)
-        .select('*')
-        .order('created_at', { ascending: false });
-    });
+  const avgScore =
+    total > 0
+      ? recentResults.reduce(
+          (acc, r) => acc + Number(r.score),
+          0
+        ) / total
+      : 0;
 
-    const attempts = attRes.data || [];
-    const completedAttempts = attempts.filter((a) => a.status === 'SUBMITTED');
+  const avgPct =
+    total > 0
+      ? recentResults.reduce(
+          (acc, r) => acc + Number(r.percentage),
+          0
+        ) / total
+      : 0;
 
-    const resRes = await selectFromTable<Result[]>('results', 'result', async (tbl) => {
-      return await supabase
-        .from(tbl)
-        .select('*');
-    });
-
-    const results = resRes.data || [];
-    const passedResults = results.filter((r) => r.pass_status === 'PASSED');
-    const passRate = results.length > 0 ? Math.round((passedResults.length / results.length) * 100) : 0;
-    const avgScore = results.length > 0 ? results.reduce((acc, r) => acc + Number(r.score), 0) / results.length : 0;
-    const avgPct = results.length > 0 ? results.reduce((acc, r) => acc + Number(r.percentage), 0) / results.length : 0;
-
-    return {
-      total_exams: exams.length,
-      total_students: students.length,
-      total_attempts: attempts.length,
-      average_score: Math.round(avgScore * 10) / 10,
-      average_percentage: Math.round(avgPct * 10) / 10,
-      total_passed: passedResults.length,
-      total_failed: results.length - passedResults.length,
-      pass_rate: passRate,
-      recent_attempts: attempts.slice(0, 5),
-      exam_performance: exams.map((ex) => {
-        const exAtts = attempts.filter((a) => a.exam_id === ex.exam_id);
-        const exResults = results.filter((r) => exAtts.some((a) => a.attempt_id === r.attempt_id));
-        const exPassed = exResults.filter((r) => r.pass_status === 'PASSED');
-        const exAvgPct = exResults.length > 0 ? exResults.reduce((acc, r) => acc + Number(r.percentage), 0) / exResults.length : 0;
-        return {
-          exam_id: ex.exam_id,
-          title: ex.title,
-          attempts_count: exAtts.length,
-          avg_percentage: Math.round(exAvgPct * 10) / 10,
-          pass_rate: exResults.length > 0 ? Math.round((exPassed.length / exResults.length) * 100) : 0
-        };
-      })
-    };
-  },
-
+  return {
+    student,
+    total_attempts: total,
+    completed_exams: total,
+    average_score: Math.round(avgScore * 10) / 10,
+    average_percentage: Math.round(avgPct * 10) / 10,
+    pass_count: passCount,
+    fail_count: failCount,
+    pass_rate:
+      total > 0
+        ? Math.round((passCount / total) * 100)
+        : 0,
+    recent_results: recentResults.slice(0, 5),
+    available_exams: availableExams,
+  };
+}
   // --------------------------------------------------------------------------
   // DATABASE STATUS & RECORD INSPECTION (Direct Supabase Queries)
   // --------------------------------------------------------------------------
