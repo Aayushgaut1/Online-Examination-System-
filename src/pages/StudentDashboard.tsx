@@ -721,22 +721,23 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               You haven't completed any examinations yet.
             </p>
 
-            {stats.available_exams.length > 0 ? (
-              <button
-                onClick={() =>
+            <button
+              onClick={() => {
+                if (stats.available_exams.length > 0) {
                   handleStartOrResumeExam(
                     stats.available_exams[0].exam_id
-                  )
+                  );
+                } else {
+                  toast.info(
+                    'No published examinations are available right now. Please check back after your teacher publishes an exam.',
+                    'No Exam Available'
+                  );
                 }
-                className="px-4 py-2 rounded-xl text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-500 transition-colors cursor-pointer"
-              >
-                Start Your First Exam
-              </button>
-            ) : (
-              <p className="text-xs text-slate-500">
-                No published examination is currently available.
-              </p>
-            )}
+              }}
+              className="px-4 py-2 rounded-xl text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-500 transition-colors cursor-pointer"
+            >
+              Start Your First Exam
+            </button>
           </div>
         )}
       </section>
