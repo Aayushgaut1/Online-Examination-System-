@@ -1199,7 +1199,7 @@ export const api = {
     recent_results: recentResults.slice(0, 5),
     available_exams: availableExams,
   };
-}
+},
   // --------------------------------------------------------------------------
   // DATABASE STATUS & RECORD INSPECTION (Direct Supabase Queries)
   // --------------------------------------------------------------------------
