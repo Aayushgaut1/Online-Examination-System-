@@ -6,6 +6,26 @@ import { authenticateToken, requireRole, AuthRequest } from '../auth.js';
 
 const router = Router();
 
+// Helper: Resolve student_id for authenticated user
+async function resolveStudentId(req: AuthRequest): Promise<number | null> {
+  if (req.user?.student_id) return req.user.student_id;
+  if (req.user?.user_id) {
+    const student = await postgresService.findStudentByUserId(req.user.user_id);
+    if (student) {
+      req.user.student_id = student.student_id;
+      return student.student_id;
+    }
+  }
+  if (req.user?.email) {
+    const student = await postgresService.findStudentByEmail(req.user.email);
+    if (student) {
+      req.user.student_id = student.student_id;
+      return student.student_id;
+    }
+  }
+  return null;
+}
+
 // GET /api/results/:id - Detailed Result & Question Analysis
 router.get('/:id', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
@@ -23,7 +43,8 @@ router.get('/:id', authenticateToken, async (req: AuthRequest, res: Response) =>
       }
 
       const isTeacher = req.user?.role === 'TEACHER' || req.user?.role === 'ADMIN';
-      const isOwner = attempt.student_id === req.user?.student_id;
+      const currentStudentId = await resolveStudentId(req);
+      const isOwner = currentStudentId !== null && attempt.student_id === currentStudentId;
       if (!isTeacher && !isOwner) {
         return res.status(403).json({ error: 'Access denied to this result.' });
       }
@@ -175,7 +196,8 @@ router.get('/students/:studentId/results', authenticateToken, async (req: AuthRe
   try {
     const studentId = Number(req.params.studentId);
     const isTeacher = req.user?.role === 'TEACHER' || req.user?.role === 'ADMIN';
-    const isOwner = req.user?.student_id === studentId;
+    const currentStudentId = await resolveStudentId(req);
+    const isOwner = currentStudentId === studentId;
 
     if (!isTeacher && !isOwner) {
       return res.status(403).json({ error: 'Access denied.' });

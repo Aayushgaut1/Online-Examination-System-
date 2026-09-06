@@ -317,10 +317,41 @@ export const api = {
         return await supabase
           .from(tbl)
           .select('*')
-          .ilike('email', cleanEmail)
+          .eq('user_id', userProfile.user_id)
           .maybeSingle();
       });
-      studentProfile = studentRes.data || undefined;
+
+      if (studentRes.data) {
+        studentProfile = studentRes.data;
+      } else {
+        const studentByEmail = await selectFromTable<Student>('students', 'student', async (tbl) => {
+          return await supabase
+            .from(tbl)
+            .select('*')
+            .ilike('email', cleanEmail)
+            .maybeSingle();
+        });
+        studentProfile = studentByEmail.data || undefined;
+      }
+
+      if (!studentProfile) {
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          if (session?.access_token) {
+            const beRes = await fetch('/api/auth/me', {
+              headers: { 'Authorization': `Bearer ${session.access_token}` }
+            });
+            if (beRes.ok) {
+              const beData = await beRes.json();
+              if (beData.student) {
+                studentProfile = beData.student;
+              }
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
     }
 
     return {
@@ -342,61 +373,265 @@ export const api = {
   },
 
   // --------------------------------------------------------------------------
-  // EXAMS (Direct Supabase SELECT, INSERT, UPDATE, DELETE)
+  // EXAMS (Direct Supabase SELECT, INSERT, UPDATE, DELETE with Server Fallbacks)
   // --------------------------------------------------------------------------
- async getExams(): Promise<Exam[]> {
-  const res = await selectFromTable<any[]>(
-    'exams',
-    'exam',
-    async (tbl) => {
+  async createExam(data: {
+    title: string;
+    description?: string;
+    duration_minutes: number | string;
+    total_marks?: number | string;
+    passing_percentage?: number | string;
+    is_published?: boolean;
+    status?: string;
+    questions?: Array<{
+      question_text: string;
+      marks?: number | string;
+      order_num?: number;
+      question_order?: number;
+      options?: Array<{
+        option_text: string;
+        option_label?: string;
+        is_correct?: boolean;
+        isCorrect?: boolean;
+      }>;
+    }>;
+  }): Promise<{ message: string; exam: Exam }> {
+    // 1. Verify current authenticated user via Supabase Auth
+    const { data: { user: authUser }, error: authError } = await supabase.auth.getUser();
+    if (authError || !authUser || !authUser.email) {
+      throw new Error('Authentication required: Please log in as faculty to create an exam.');
+    }
+
+    // 2. Fetch authenticated faculty user's profile from database
+    const cleanEmail = authUser.email.toLowerCase();
+    const { data: userProfile, error: userError } = await supabase
+      .from('users')
+      .select('*')
+      .ilike('email', cleanEmail)
+      .maybeSingle();
+
+    if (userError || !userProfile) {
+      throw new Error('User profile not found in database. Please log in again.');
+    }
+
+    // 3. Verify teacher/faculty or admin role
+    const roleUpper = String(userProfile.role || '').toUpperCase();
+    if (roleUpper !== 'TEACHER' && roleUpper !== 'ADMIN') {
+      throw new Error('Unauthorized: Only faculty members (teachers/admins) are permitted to create examinations.');
+    }
+
+    const facultyUserId = userProfile.user_id;
+
+    // 4. Validate input values
+    if (!data.title || !data.title.trim()) {
+      throw new Error('Exam title is required.');
+    }
+
+    const durationMinutes = Math.max(1, Number(data.duration_minutes) || 30);
+    const passingPercentage = Math.min(100, Math.max(0, Number(data.passing_percentage ?? 40)));
+    const initialStatus = data.status || (data.is_published !== false ? 'PUBLISHED' : 'DRAFT');
+
+    // Calculate marks from questions if provided
+    let totalMarks = Number(data.total_marks) || 0;
+    if (Array.isArray(data.questions) && data.questions.length > 0) {
+      const computed = data.questions.reduce((sum, q) => sum + (Number(q.marks) || 1), 0);
+      if (computed > 0) totalMarks = computed;
+    }
+    if (totalMarks <= 0) totalMarks = 100;
+
+    // 5. Insert exam row into Supabase 'exams' table
+    let createdExamRow: any = null;
+    let insertError: any = null;
+
+    const res = await selectFromTable<any>('exams', 'exam', async (tbl) => {
       return await supabase
         .from(tbl)
-        .select('*')
-        .order('exam_id', { ascending: true });
+        .insert({
+          title: data.title.trim(),
+          description: (data.description || '').trim(),
+          duration_minutes: durationMinutes,
+          total_marks: totalMarks,
+          passing_percentage: passingPercentage,
+          status: initialStatus,
+          created_by: facultyUserId,
+          created_at: new Date().toISOString()
+        })
+        .select()
+        .single();
+    });
+
+    if (!res.error && res.data) {
+      createdExamRow = res.data;
+    } else {
+      insertError = res.error;
     }
-  );
 
-  if (res.error) {
-    handleSupabaseError(
-      res.error,
-      'Failed to fetch exams'
-    );
-  }
+    // If direct Supabase insert encountered RLS or error, use server-side authenticated creation fallback
+    if (insertError || !createdExamRow) {
+      console.warn('[api.createExam] Direct Supabase insert policy guard, executing backend Supabase creation handler:', insertError?.message);
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || '';
 
-  const exams: Exam[] = (res.data || []).map(
-    (exam: any) => ({
-      ...exam,
+      const apiRes = await fetch('/api/exams', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          title: data.title.trim(),
+          description: (data.description || '').trim(),
+          duration_minutes: durationMinutes,
+          total_marks: totalMarks,
+          passing_percentage: passingPercentage,
+          is_published: initialStatus === 'PUBLISHED',
+          status: initialStatus,
+          questions: data.questions
+        })
+      });
 
-      // Database uses status = PUBLISHED
-      // Frontend also understands is_published
-      is_published:
-        exam.is_published === true ||
-        String(exam.status || '').toUpperCase() ===
-          'PUBLISHED',
-    })
-  );
+      if (!apiRes.ok) {
+        const errJson = await apiRes.json().catch(() => ({}));
+        handleSupabaseError(insertError || errJson, 'Failed to create exam in Supabase');
+      }
 
-  // Count questions
-  for (const exam of exams) {
-    const qRes = await selectFromTable(
-      'questions',
-      'question',
-      async (qTbl) => {
+      const resBody = await apiRes.json();
+      const serverExam: Exam = {
+        ...resBody.exam,
+        is_published: resBody.exam.is_published === true || String(resBody.exam.status || '').toUpperCase() === 'PUBLISHED',
+        status: resBody.exam.status || initialStatus
+      };
+
+      return {
+        message: resBody.message || 'Exam created successfully',
+        exam: serverExam
+      };
+    }
+
+    // 6. Direct insert of questions and options if provided
+    const examId = createdExamRow.exam_id;
+    let questionsCount = 0;
+
+    if (Array.isArray(data.questions) && data.questions.length > 0) {
+      for (let idx = 0; idx < data.questions.length; idx++) {
+        const q = data.questions[idx];
+        const qOrder = q.question_order ?? q.order_num ?? (idx + 1);
+        const qMarks = Number(q.marks) || 1;
+
+        const qRes = await selectFromTable<any>('questions', 'question', async (tbl) => {
+          return await supabase
+            .from(tbl)
+            .insert({
+              exam_id: examId,
+              question_text: q.question_text.trim(),
+              marks: qMarks,
+              question_order: qOrder,
+              created_at: new Date().toISOString()
+            })
+            .select()
+            .single();
+        });
+
+        if (!qRes.error && qRes.data) {
+          questionsCount++;
+          const createdQ = qRes.data;
+          const rawOpts = q.options || [];
+          const optionsToInsert = rawOpts.map((opt, optIdx) => ({
+            question_id: createdQ.question_id,
+            option_label: opt.option_label || String.fromCharCode(65 + optIdx),
+            option_text: opt.option_text.trim(),
+            is_correct: Boolean(opt.is_correct ?? opt.isCorrect),
+            created_at: new Date().toISOString()
+          }));
+
+          if (optionsToInsert.length > 0) {
+            await selectFromTable('options', 'option', async (tbl) => {
+              return await supabase.from(tbl).insert(optionsToInsert);
+            });
+          }
+        }
+      }
+    }
+
+    const createdExam: Exam = {
+      ...createdExamRow,
+      is_published: createdExamRow.is_published === true || String(createdExamRow.status || '').toUpperCase() === 'PUBLISHED',
+      status: createdExamRow.status || initialStatus,
+      question_count: questionsCount
+    };
+
+    return {
+      message: 'Exam created successfully',
+      exam: createdExam
+    };
+  },
+
+  async getExams(): Promise<Exam[]> {
+    let exams: Exam[] = [];
+
+    const res = await selectFromTable<any[]>(
+      'exams',
+      'exam',
+      async (tbl) => {
         return await supabase
-          .from(qTbl)
-          .select('question_id', {
-            count: 'exact',
-            head: true,
-          })
-          .eq('exam_id', exam.exam_id);
+          .from(tbl)
+          .select('*')
+          .order('exam_id', { ascending: true });
       }
     );
 
-    exam.question_count = qRes.count ?? 0;
-  }
+    if (!res.error && Array.isArray(res.data) && res.data.length > 0) {
+      exams = res.data.map((exam: any) => ({
+        ...exam,
+        is_published:
+          exam.is_published === true ||
+          String(exam.status || '').toUpperCase() === 'PUBLISHED',
+        status: exam.status || (exam.is_published ? 'PUBLISHED' : 'DRAFT')
+      }));
+    } else {
+      // If direct client query returns empty (e.g. Supabase RLS restrictions), fetch from server
+      try {
+        const response = await fetch('/api/exams');
+        if (response.ok) {
+          const data = await response.json();
+          if (Array.isArray(data)) {
+            exams = data.map((exam: any) => ({
+              ...exam,
+              is_published:
+                exam.is_published === true ||
+                String(exam.status || '').toUpperCase() === 'PUBLISHED',
+              status: exam.status || (exam.is_published ? 'PUBLISHED' : 'DRAFT')
+            }));
+          }
+        }
+      } catch (err) {
+        console.warn('[api.getExams] Server fallback fetch:', err);
+      }
+    }
 
-  return exams;
-},
+    // Populate question counts
+    for (const exam of exams) {
+      if (exam.question_count === undefined) {
+        const qRes = await selectFromTable(
+          'questions',
+          'question',
+          async (qTbl) => {
+            return await supabase
+              .from(qTbl)
+              .select('question_id', {
+                count: 'exact',
+                head: true,
+              })
+              .eq('exam_id', exam.exam_id);
+          }
+        );
+
+        exam.question_count = qRes.count ?? 0;
+      }
+    }
+
+    return exams;
+  },
 
   async getExamById(examId: number): Promise<Exam> {
     const res = await selectFromTable<any>('exams', 'exam', async (tbl) => {
@@ -407,16 +642,127 @@ export const api = {
         .single();
     });
 
-    if (res.error || !res.data) {
-      handleSupabaseError(res.error, `Exam #${examId} not found`);
+    if (!res.error && res.data) {
+      return {
+        ...res.data,
+        is_published:
+          res.data.is_published === true ||
+          String(res.data.status || '').toUpperCase() === 'PUBLISHED',
+        status: res.data.status || (res.data.is_published ? 'PUBLISHED' : 'DRAFT')
+      } as Exam;
     }
 
-    return {
-      ...res.data,
-      is_published:
-        res.data.is_published === true ||
-        String(res.data.status || '').toUpperCase() === 'PUBLISHED',
-    } as Exam;
+    // Server fallback
+    try {
+      const response = await fetch(`/api/exams/${examId}`);
+      if (response.ok) {
+        const data = await response.json();
+        return {
+          ...data,
+          is_published:
+            data.is_published === true ||
+            String(data.status || '').toUpperCase() === 'PUBLISHED',
+          status: data.status || (data.is_published ? 'PUBLISHED' : 'DRAFT')
+        } as Exam;
+      }
+    } catch (err) {
+      console.warn(`[api.getExamById] Server fallback for #${examId}:`, err);
+    }
+
+    handleSupabaseError(res.error, `Exam #${examId} not found`);
+  },
+
+  async togglePublishExam(examId: number): Promise<{
+    message: string;
+    is_published: boolean;
+    status: string;
+    exam?: Exam;
+  }> {
+    const current = await this.getExamById(examId);
+    const currentlyPublished =
+      current.is_published ||
+      String(current.status || '').toUpperCase() === 'PUBLISHED';
+    const newStatus = currentlyPublished ? 'DRAFT' : 'PUBLISHED';
+    const newIsPublished = !currentlyPublished;
+
+    const res = await selectFromTable<any>('exams', 'exam', async (tbl) => {
+      return await supabase
+        .from(tbl)
+        .update({
+          status: newStatus,
+          updated_at: new Date().toISOString()
+        })
+        .eq('exam_id', examId)
+        .select()
+        .single();
+    });
+
+    if (!res.error && res.data) {
+      return {
+        message: `Exam status successfully updated to ${newStatus}`,
+        is_published: newIsPublished,
+        status: newStatus,
+        exam: {
+          ...res.data,
+          is_published: newIsPublished,
+          status: newStatus
+        }
+      };
+    }
+
+    // Fallback to server route PATCH /api/exams/:id/publish
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token || '';
+    const response = await fetch(`/api/exams/${examId}/publish`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ is_published: newIsPublished })
+    });
+
+    if (response.ok) {
+      const json = await response.json();
+      return {
+        message: json.message || `Exam status changed to ${newStatus}`,
+        is_published: newIsPublished,
+        status: newStatus,
+        exam: {
+          ...json.exam,
+          is_published: newIsPublished,
+          status: newStatus
+        }
+      };
+    }
+
+    handleSupabaseError(res.error, `Failed to toggle publish status for exam #${examId}`);
+  },
+
+  async deleteExam(examId: number): Promise<{ message: string }> {
+    const res = await selectFromTable('exams', 'exam', async (tbl) => {
+      return await supabase.from(tbl).delete().eq('exam_id', examId);
+    });
+
+    if (!res.error) {
+      return { message: `Exam #${examId} deleted successfully` };
+    }
+
+    // Fallback to server route DELETE /api/exams/:id
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token || '';
+    const response = await fetch(`/api/exams/${examId}`, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
+
+    if (response.ok) {
+      return { message: `Exam #${examId} deleted successfully` };
+    }
+
+    handleSupabaseError(res.error, `Failed to delete exam #${examId}`);
   },
 
   // --------------------------------------------------------------------------
@@ -431,11 +777,41 @@ export const api = {
         .order('question_order', { ascending: true });
     });
 
-    if (qRes.error) {
-      handleSupabaseError(qRes.error, `Failed to fetch questions for exam #${examId}`);
+    let questionRows = qRes.data || [];
+
+    // Fallback to server route if empty or error
+    if (questionRows.length === 0) {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const token = session?.access_token || '';
+        const srvRes = await fetch(`/api/exams/${examId}/questions`, {
+          headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+        });
+        if (srvRes.ok) {
+          const srvData = await srvRes.json();
+          if (Array.isArray(srvData) && srvData.length > 0) {
+            return srvData.map((q: any) => ({
+              question_id: q.question_id,
+              exam_id: q.exam_id,
+              question_text: q.question_text,
+              marks: Number(q.marks) || 1,
+              order_num: q.question_order ?? q.order_num,
+              created_at: q.created_at,
+              options: (q.options || []).map((o: any) => ({
+                option_id: o.option_id,
+                question_id: o.question_id,
+                option_label: o.option_label,
+                option_text: o.option_text,
+                is_correct: Boolean(o.is_correct)
+              }))
+            }));
+          }
+        }
+      } catch (err) {
+        console.warn(`[api.getExamQuestions] Server questions fallback #${examId}:`, err);
+      }
     }
 
-    const questionRows = qRes.data || [];
     if (questionRows.length === 0) return [];
 
     const questionIds = questionRows.map((q) => q.question_id);
@@ -454,10 +830,19 @@ export const api = {
       question_id: q.question_id,
       exam_id: q.exam_id,
       question_text: q.question_text,
-      marks: q.marks,
-      order_num: q.order_num,
+      marks: Number(q.marks) || 1,
+      order_num: q.question_order ?? q.order_num,
       created_at: q.created_at,
-      options: optionRows.filter((opt) => opt.question_id === q.question_id)
+      options: optionRows
+        .filter((opt) => opt.question_id === q.question_id)
+        .map((opt) => ({
+          option_id: opt.option_id,
+          question_id: opt.question_id,
+          option_label: (opt as any).option_label,
+          option_text: opt.option_text,
+          is_correct: Boolean(opt.is_correct),
+          created_at: opt.created_at
+        }))
     }));
   },
 
@@ -469,7 +854,16 @@ export const api = {
       options: { option_label?: string; option_text: string; is_correct: boolean }[];
     }
   ): Promise<{ message: string; question: Question }> {
-    // 1. Insert question row
+    // 1. Get next question_order
+    let nextOrder = 1;
+    try {
+      const existing = await this.getExamQuestions(examId);
+      nextOrder = existing.length + 1;
+    } catch {
+      nextOrder = 1;
+    }
+
+    // 2. Insert question row
     const qRes = await selectFromTable<any>('questions', 'question', async (tbl) => {
       return await supabase
         .from(tbl)
@@ -477,46 +871,77 @@ export const api = {
           exam_id: examId,
           question_text: data.question_text.trim(),
           marks: Number(data.marks) || 1,
+          question_order: nextOrder,
           created_at: new Date().toISOString()
         })
         .select()
         .single();
     });
 
-    if (qRes.error || !qRes.data) {
-      handleSupabaseError(qRes.error, 'Failed to add question');
+    if (!qRes.error && qRes.data) {
+      const createdQuestion = qRes.data;
+
+      // 3. Insert options
+      const optionsToInsert = (data.options || []).map((opt, optIdx) => ({
+        question_id: createdQuestion.question_id,
+        option_label: opt.option_label || String.fromCharCode(65 + optIdx),
+        option_text: opt.option_text.trim(),
+        is_correct: Boolean(opt.is_correct),
+        created_at: new Date().toISOString()
+      }));
+
+      let insertedOptions: Option[] = [];
+      if (optionsToInsert.length > 0) {
+        const optRes = await selectFromTable<Option[]>('options', 'option', async (tbl) => {
+          return await supabase
+            .from(tbl)
+            .insert(optionsToInsert)
+            .select();
+        });
+        if (optRes.data) {
+          insertedOptions = optRes.data;
+        }
+      }
+
+      return {
+        message: 'Question added successfully',
+        question: {
+          question_id: createdQuestion.question_id,
+          exam_id: examId,
+          question_text: createdQuestion.question_text,
+          marks: createdQuestion.marks,
+          order_num: createdQuestion.question_order ?? nextOrder,
+          created_at: createdQuestion.created_at,
+          options: insertedOptions
+        }
+      };
     }
 
-    const createdQuestion = qRes.data;
+    // Fallback to server route POST /api/exams/:examId/questions
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token || '';
+    const response = await fetch(`/api/exams/${examId}/questions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        question_text: data.question_text.trim(),
+        marks: Number(data.marks) || 1,
+        options: data.options
+      })
+    });
 
-    // 2. Insert options
-    const optionsToInsert = (data.options || []).map((opt) => ({
-      question_id: createdQuestion.question_id,
-      option_text: opt.option_text.trim(),
-      is_correct: Boolean(opt.is_correct),
-      created_at: new Date().toISOString()
-    }));
-
-    let insertedOptions: Option[] = [];
-    if (optionsToInsert.length > 0) {
-      const optRes = await selectFromTable<Option[]>('options', 'option', async (tbl) => {
-        return await supabase
-          .from(tbl)
-          .insert(optionsToInsert)
-          .select();
-      });
-      if (optRes.data) {
-        insertedOptions = optRes.data;
-      }
+    if (response.ok) {
+      const json = await response.json();
+      return {
+        message: json.message || 'Question added successfully',
+        question: json.question
+      };
     }
 
-    return {
-      message: 'Question added successfully',
-      question: {
-        ...createdQuestion,
-        options: insertedOptions
-      }
-    };
+    handleSupabaseError(qRes.error, 'Failed to add question');
   },
 
   async updateQuestion(
@@ -531,24 +956,27 @@ export const api = {
     if (data.question_text !== undefined) qUpdate.question_text = data.question_text;
     if (data.marks !== undefined) qUpdate.marks = Number(data.marks);
 
+    let updatedSuccess = false;
+
     if (Object.keys(qUpdate).length > 0) {
-      await selectFromTable('questions', 'question', async (tbl) => {
+      const qRes = await selectFromTable('questions', 'question', async (tbl) => {
         return await supabase
           .from(tbl)
           .update(qUpdate)
           .eq('question_id', questionId);
       });
+      if (!qRes.error) updatedSuccess = true;
     }
 
     // If options provided, update them
     if (Array.isArray(data.options)) {
-      // Remove old options and insert updated
       await selectFromTable('options', 'option', async (tbl) => {
         return await supabase.from(tbl).delete().eq('question_id', questionId);
       });
 
-      const optionsToInsert = data.options.map((opt) => ({
+      const optionsToInsert = data.options.map((opt, optIdx) => ({
         question_id: questionId,
+        option_label: opt.option_label || String.fromCharCode(65 + optIdx),
         option_text: opt.option_text,
         is_correct: Boolean(opt.is_correct),
         created_at: new Date().toISOString()
@@ -557,15 +985,40 @@ export const api = {
       await selectFromTable('options', 'option', async (tbl) => {
         return await supabase.from(tbl).insert(optionsToInsert);
       });
+      updatedSuccess = true;
     }
 
-    const questions = await this.getExamQuestions(questionId);
-    const updated = questions.find((q) => q.question_id === questionId);
+    if (updatedSuccess) {
+      const questions = await this.getExamQuestions(questionId);
+      const updated = questions.find((q) => q.question_id === questionId);
 
-    return {
-      message: 'Question updated successfully',
-      question: updated || ({} as Question)
-    };
+      return {
+        message: 'Question updated successfully',
+        question: updated || ({} as Question)
+      };
+    }
+
+    // Fallback to server route PUT /api/questions/:id
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token || '';
+    const response = await fetch(`/api/questions/${questionId}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify(data)
+    });
+
+    if (response.ok) {
+      const json = await response.json();
+      return {
+        message: json.message || 'Question updated successfully',
+        question: json.question
+      };
+    }
+
+    throw new Error(`Failed to update question #${questionId}`);
   },
 
   async deleteQuestion(questionId: number): Promise<{ message: string }> {
@@ -576,11 +1029,25 @@ export const api = {
         .eq('question_id', questionId);
     });
 
-    if (res.error) {
-      handleSupabaseError(res.error, `Failed to delete question #${questionId}`);
+    if (!res.error) {
+      return { message: `Question #${questionId} deleted successfully` };
     }
 
-    return { message: `Question #${questionId} deleted successfully` };
+    // Fallback to server route DELETE /api/questions/:id
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token || '';
+    const response = await fetch(`/api/questions/${questionId}`, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
+
+    if (response.ok) {
+      return { message: `Question #${questionId} deleted successfully` };
+    }
+
+    handleSupabaseError(res.error, `Failed to delete question #${questionId}`);
   },
 
   // --------------------------------------------------------------------------
@@ -628,31 +1095,92 @@ export const api = {
       };
     }
 
-    // 4. Create new attempt
-    const newAttemptRes = await selectFromTable<Attempt>('attempts', 'attempt', async (tbl) => {
-      return await supabase
-        .from(tbl)
-        .insert({
-          exam_id: examId,
-          student_id: studentId,
-          start_time: new Date().toISOString(),
-          status: 'IN_PROGRESS',
-          created_at: new Date().toISOString()
-        })
-        .select()
-        .single();
-    });
+    // 4. Create new attempt.
+    // Prefer the authenticated server handler first. This avoids making the
+    // student-facing client depend on a table-specific INSERT RLS policy.
+    // The server route must verify the same Supabase session and student
+    // ownership before inserting the attempt.
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token || '';
 
-    if (newAttemptRes.error || !newAttemptRes.data) {
-      handleSupabaseError(newAttemptRes.error, 'Failed to start examination attempt');
+    if (!token) {
+      throw new Error('Authenticated session not found. Please log in again.');
     }
 
-    return {
-      message: 'Examination session initiated',
-      attempt: newAttemptRes.data,
-      remaining_seconds: (exam.duration_minutes || 30) * 60,
-      is_resumed: false
-    };
+    try {
+      const apiRes = await fetch(`/api/exams/${examId}/attempts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (apiRes.ok) {
+        const resBody = await apiRes.json();
+
+        if (resBody?.attempt) {
+          return {
+            message: resBody.message || 'Exam attempt started',
+            attempt: resBody.attempt,
+            remaining_seconds:
+              Number(resBody.remaining_seconds) ||
+              (exam.duration_minutes || 30) * 60,
+            is_resumed: Boolean(resBody.is_resumed)
+          };
+        }
+      } else {
+        const errJson = await apiRes.json().catch(() => ({}));
+        console.warn(
+          '[api.startAttempt] Server attempt handler failed:',
+          errJson?.error || errJson?.message || apiRes.statusText
+        );
+      }
+    } catch (serverErr: any) {
+      console.warn(
+        '[api.startAttempt] Server attempt handler unavailable:',
+        serverErr?.message || serverErr
+      );
+    }
+
+    // 5. Client fallback. This is kept for deployments where the server
+    // route is unavailable. It still relies on the existing RLS policy.
+    try {
+      const newAttemptRes = await selectFromTable<Attempt>('attempts', 'attempt', async (tbl) => {
+        return await supabase
+          .from(tbl)
+          .insert({
+            exam_id: examId,
+            student_id: studentId,
+            start_time: new Date().toISOString(),
+            status: 'IN_PROGRESS',
+            created_at: new Date().toISOString()
+          })
+          .select()
+          .single();
+      });
+
+      if (!newAttemptRes.error && newAttemptRes.data) {
+        const newAttemptRow = newAttemptRes.data;
+
+        return {
+          message: 'Examination session initiated',
+          attempt: newAttemptRow,
+          remaining_seconds: (exam.duration_minutes || 30) * 60,
+          is_resumed: false
+        };
+      }
+
+      handleSupabaseError(
+        newAttemptRes.error,
+        `Failed to start examination attempt for exam #${examId}`
+      );
+    } catch (clientErr: any) {
+      handleSupabaseError(
+        clientErr,
+        `Failed to start examination attempt for exam #${examId}`
+      );
+    }
   },
 
   async getAttempt(attemptId: number): Promise<{
@@ -670,104 +1198,151 @@ export const api = {
     result?: Result;
     remaining_seconds: number;
   }> {
-    // 1. Fetch attempt
-    const attRes = await selectFromTable<Attempt>('attempts', 'attempt', async (tbl) => {
-      return await supabase
-        .from(tbl)
-        .select('*')
-        .eq('attempt_id', attemptId)
-        .single();
-    });
+    try {
+      // 1. Fetch attempt
+      const attRes = await selectFromTable<Attempt>('attempts', 'attempt', async (tbl) => {
+        return await supabase
+          .from(tbl)
+          .select('*')
+          .eq('attempt_id', attemptId)
+          .single();
+      });
 
-    if (attRes.error || !attRes.data) {
-      handleSupabaseError(attRes.error, `Attempt #${attemptId} not found`);
+      if (attRes.error || !attRes.data) {
+        throw attRes.error || new Error(`Attempt #${attemptId} not found`);
+      }
+
+      const attempt = attRes.data;
+
+      // 2. Fetch exam & student
+      const exam = await this.getExamById(attempt.exam_id);
+      const stuRes = await selectFromTable<Student>('students', 'student', async (tbl) => {
+        return await supabase
+          .from(tbl)
+          .select('*')
+          .eq('student_id', attempt.student_id)
+          .single();
+      });
+      const student = stuRes.data || ({} as Student);
+
+      // 3. Fetch questions (mask is_correct for students during active exam)
+      const questions = (await this.getExamQuestions(attempt.exam_id)).map((q) => ({
+        ...q,
+        options: q.options.map((opt) => ({
+          ...opt,
+          is_correct: attempt.status === 'SUBMITTED' ? opt.is_correct : undefined
+        }))
+      }));
+
+      // 4. Fetch existing answers
+      const ansRes = await selectFromTable<any[]>('answers', 'answer', async (tbl) => {
+        return await supabase
+          .from(tbl)
+          .select('*')
+          .eq('attempt_id', attemptId);
+      });
+      const answers = ansRes.data || [];
+
+      // Calculate remaining time
+      const startTime = new Date(attempt.start_time).getTime();
+      const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
+      const totalDurationSeconds = (exam.duration_minutes || 30) * 60;
+      const remaining_seconds = Math.max(0, totalDurationSeconds - elapsedSeconds);
+
+      return {
+        attempt,
+        exam,
+        student,
+        questions,
+        answers,
+        remaining_seconds
+      };
+    } catch (clientErr: any) {
+      // Direct query fallback to backend authenticated handler
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || '';
+
+      const apiRes = await fetch(`/api/attempts/${attemptId}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (!apiRes.ok) {
+        const errJson = await apiRes.json().catch(() => ({}));
+        handleSupabaseError(clientErr || errJson, errJson?.error || `Failed to fetch attempt #${attemptId}`);
+      }
+
+      const body = await apiRes.json();
+      return body;
     }
-
-    const attempt = attRes.data;
-
-    // 2. Fetch exam & student
-    const exam = await this.getExamById(attempt.exam_id);
-    const stuRes = await selectFromTable<Student>('students', 'student', async (tbl) => {
-      return await supabase
-        .from(tbl)
-        .select('*')
-        .eq('student_id', attempt.student_id)
-        .single();
-    });
-    const student = stuRes.data || ({} as Student);
-
-    // 3. Fetch questions (mask is_correct for students during active exam)
-    const questions = (await this.getExamQuestions(attempt.exam_id)).map((q) => ({
-      ...q,
-      options: q.options.map((opt) => ({
-        ...opt,
-        is_correct: attempt.status === 'SUBMITTED' ? opt.is_correct : undefined
-      }))
-    }));
-
-    // 4. Fetch existing answers
-    const ansRes = await selectFromTable<any[]>('answers', 'answer', async (tbl) => {
-      return await supabase
-        .from(tbl)
-        .select('*')
-        .eq('attempt_id', attemptId);
-    });
-    const answers = ansRes.data || [];
-
-    // Calculate remaining time
-    const startTime = new Date(attempt.start_time).getTime();
-    const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
-    const totalDurationSeconds = (exam.duration_minutes || 30) * 60;
-    const remaining_seconds = Math.max(0, totalDurationSeconds - elapsedSeconds);
-
-    return {
-      attempt,
-      exam,
-      student,
-      questions,
-      answers,
-      remaining_seconds
-    };
   },
 
   async saveAnswer(
     attemptId: number,
     data: { question_id: number; selected_option_id: number | null; is_marked_for_review?: boolean }
   ): Promise<{ message: string }> {
-    // Check if answer already exists
-    const existing = await selectFromTable<any>('answers', 'answer', async (tbl) => {
-      return await supabase
-        .from(tbl)
-        .select('*')
-        .eq('attempt_id', attemptId)
-        .eq('question_id', data.question_id)
-        .maybeSingle();
-    });
+    let saveErr: any = null;
+    try {
+      // Check if answer already exists
+      const existing = await selectFromTable<any>('answers', 'answer', async (tbl) => {
+        return await supabase
+          .from(tbl)
+          .select('*')
+          .eq('attempt_id', attemptId)
+          .eq('question_id', data.question_id)
+          .maybeSingle();
+      });
 
-    if (existing.data) {
-      await selectFromTable('answers', 'answer', async (tbl) => {
-        return await supabase
-          .from(tbl)
-          .update({
-            selected_option_id: data.selected_option_id,
-            is_marked_for_review: Boolean(data.is_marked_for_review),
-            updated_at: new Date().toISOString()
-          })
-          .eq('answer_id', existing.data.answer_id);
+      if (existing.data) {
+        const updateRes = await selectFromTable('answers', 'answer', async (tbl) => {
+          return await supabase
+            .from(tbl)
+            .update({
+              selected_option_id: data.selected_option_id,
+              is_marked_for_review: Boolean(data.is_marked_for_review),
+              updated_at: new Date().toISOString()
+            })
+            .eq('answer_id', existing.data.answer_id);
+        });
+        if (updateRes.error) saveErr = updateRes.error;
+      } else {
+        const insertRes = await selectFromTable('answers', 'answer', async (tbl) => {
+          return await supabase
+            .from(tbl)
+            .insert({
+              attempt_id: attemptId,
+              question_id: data.question_id,
+              selected_option_id: data.selected_option_id,
+              is_marked_for_review: Boolean(data.is_marked_for_review),
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            });
+        });
+        if (insertRes.error) saveErr = insertRes.error;
+      }
+    } catch (e) {
+      saveErr = e;
+    }
+
+    if (saveErr) {
+      // Direct update/insert encountered RLS or error, use server-side authenticated handler
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || '';
+
+      const apiRes = await fetch(`/api/attempts/${attemptId}/answers`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(data)
       });
-    } else {
-      await selectFromTable('answers', 'answer', async (tbl) => {
-        return await supabase
-          .from(tbl)
-          .insert({
-            attempt_id: attemptId,
-            question_id: data.question_id,
-            selected_option_id: data.selected_option_id,
-            is_marked_for_review: Boolean(data.is_marked_for_review),
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          });
-      });
+
+      if (!apiRes.ok) {
+        const errJson = await apiRes.json().catch(() => ({}));
+        handleSupabaseError(saveErr || errJson, errJson?.error || 'Failed to save answer');
+      }
     }
 
     return { message: 'Answer saved' };
@@ -777,239 +1352,307 @@ export const api = {
     attemptId: number,
     data?: { answers?: Array<{ question_id: number; selected_option_id: number | null }> }
   ): Promise<{ message: string; result: Result; attempt: Attempt }> {
-    // 1. Save any submitted answers
-    if (data?.answers && Array.isArray(data.answers)) {
-      for (const ans of data.answers) {
-        await this.saveAnswer(attemptId, ans);
-      }
-    }
-
-    // 2. Fetch attempt & exam info
-    const attRes = await selectFromTable<Attempt>('attempts', 'attempt', async (tbl) => {
-      return await supabase
-        .from(tbl)
-        .select('*')
-        .eq('attempt_id', attemptId)
-        .single();
-    });
-
-    if (attRes.error || !attRes.data) {
-      handleSupabaseError(attRes.error, 'Attempt not found during submission');
-    }
-
-    const attempt = attRes.data;
-    const exam = await this.getExamById(attempt.exam_id);
-
-    // 3. Fetch questions and evaluate
-    const questions = await this.getExamQuestions(attempt.exam_id);
-    const ansRes = await selectFromTable<any[]>('answers', 'answer', async (tbl) => {
-      return await supabase
-        .from(tbl)
-        .select('*')
-        .eq('attempt_id', attemptId);
-    });
-    const savedAnswers = ansRes.data || [];
-
-    let correctCount = 0;
-    let incorrectCount = 0;
-    let unansweredCount = 0;
-    let earnedMarks = 0;
-    let totalPossibleMarks = 0;
-
-    for (const q of questions) {
-      const qMarks = q.marks || 1;
-      totalPossibleMarks += qMarks;
-
-      const ans = savedAnswers.find((a) => a.question_id === q.question_id);
-      if (!ans || ans.selected_option_id === null || ans.selected_option_id === undefined) {
-        unansweredCount++;
-      } else {
-        const correctOpt = q.options.find((o) => o.is_correct);
-        if (correctOpt && correctOpt.option_id === ans.selected_option_id) {
-          correctCount++;
-          earnedMarks += qMarks;
-        } else {
-          incorrectCount++;
+    try {
+      // 1. Save any submitted answers
+      if (data?.answers && Array.isArray(data.answers)) {
+        for (const ans of data.answers) {
+          await this.saveAnswer(attemptId, ans);
         }
       }
+
+      // 2. Fetch attempt & exam info
+      const attRes = await selectFromTable<Attempt>('attempts', 'attempt', async (tbl) => {
+        return await supabase
+          .from(tbl)
+          .select('*')
+          .eq('attempt_id', attemptId)
+          .single();
+      });
+
+      if (attRes.error || !attRes.data) {
+        throw attRes.error || new Error('Attempt not found during submission');
+      }
+
+      const attempt = attRes.data;
+      const exam = await this.getExamById(attempt.exam_id);
+
+      // 3. Fetch questions and evaluate
+      const questions = await this.getExamQuestions(attempt.exam_id);
+      const ansRes = await selectFromTable<any[]>('answers', 'answer', async (tbl) => {
+        return await supabase
+          .from(tbl)
+          .select('*')
+          .eq('attempt_id', attemptId);
+      });
+      const savedAnswers = ansRes.data || [];
+
+      let correctCount = 0;
+      let incorrectCount = 0;
+      let unansweredCount = 0;
+      let earnedMarks = 0;
+      let totalPossibleMarks = 0;
+
+      for (const q of questions) {
+        const qMarks = q.marks || 1;
+        totalPossibleMarks += qMarks;
+
+        const ans = savedAnswers.find((a) => a.question_id === q.question_id);
+        if (!ans || ans.selected_option_id === null || ans.selected_option_id === undefined) {
+          unansweredCount++;
+        } else {
+          const correctOpt = q.options.find((o) => o.is_correct);
+          if (correctOpt && correctOpt.option_id === ans.selected_option_id) {
+            correctCount++;
+            earnedMarks += qMarks;
+          } else {
+            incorrectCount++;
+          }
+        }
+      }
+
+      const percentage = totalPossibleMarks > 0
+        ? Math.round((earnedMarks / totalPossibleMarks) * 100 * 100) / 100
+        : 0;
+      const passStatus = percentage >= (exam.passing_percentage || 40) ? 'PASSED' : 'FAILED';
+
+      const endTime = new Date().toISOString();
+      const startTime = new Date(attempt.start_time).getTime();
+      const timeTakenSeconds = Math.max(1, Math.floor((Date.now() - startTime) / 1000));
+
+      // 4. Update attempt status to SUBMITTED
+      const updatedAttRes = await selectFromTable<Attempt>('attempts', 'attempt', async (tbl) => {
+        return await supabase
+          .from(tbl)
+          .update({
+            status: 'SUBMITTED',
+            end_time: endTime
+          })
+          .eq('attempt_id', attemptId)
+          .select()
+          .single();
+      });
+
+      const updatedAttempt = updatedAttRes.data || attempt;
+
+      // 5. Insert result record in 'results' table
+      const resultPayload = {
+        attempt_id: attemptId,
+        score: earnedMarks,
+        percentage,
+        pass_status: passStatus,
+        total_questions: questions.length,
+        correct_answers: correctCount,
+        incorrect_answers: incorrectCount,
+        unanswered_questions: unansweredCount,
+        time_taken_seconds: timeTakenSeconds,
+        created_at: endTime
+      };
+
+      const resRes = await selectFromTable<Result>('results', 'result', async (tbl) => {
+        return await supabase
+          .from(tbl)
+          .upsert(resultPayload, { onConflict: 'attempt_id' })
+          .select()
+          .single();
+      });
+
+      if (resRes.error || !resRes.data) {
+        throw resRes.error || new Error('Failed to save evaluation result in Supabase');
+      }
+
+      return {
+        message: 'Examination submitted and evaluated successfully',
+        result: resRes.data,
+        attempt: updatedAttempt
+      };
+    } catch (submitErr: any) {
+      console.warn('[api.submitAttempt] Direct Supabase submission fallback to backend evaluation handler:', submitErr?.message);
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || '';
+
+      const apiRes = await fetch(`/api/attempts/${attemptId}/submit`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ answers: data?.answers || [] })
+      });
+
+      if (!apiRes.ok) {
+        const errJson = await apiRes.json().catch(() => ({}));
+        handleSupabaseError(submitErr || errJson, errJson?.error || 'Failed to submit examination');
+      }
+
+      const resBody = await apiRes.json();
+      return {
+        message: resBody.message || 'Examination submitted and evaluated successfully',
+        result: resBody.result,
+        attempt: resBody.attempt
+      };
     }
-
-    const percentage = totalPossibleMarks > 0
-      ? Math.round((earnedMarks / totalPossibleMarks) * 100 * 100) / 100
-      : 0;
-    const passStatus = percentage >= (exam.passing_percentage || 40) ? 'PASSED' : 'FAILED';
-
-    const endTime = new Date().toISOString();
-    const startTime = new Date(attempt.start_time).getTime();
-    const timeTakenSeconds = Math.max(1, Math.floor((Date.now() - startTime) / 1000));
-
-    // 4. Update attempt status to SUBMITTED
-    const updatedAttRes = await selectFromTable<Attempt>('attempts', 'attempt', async (tbl) => {
-      return await supabase
-        .from(tbl)
-        .update({
-          status: 'SUBMITTED',
-          end_time: endTime
-        })
-        .eq('attempt_id', attemptId)
-        .select()
-        .single();
-    });
-
-    const updatedAttempt = updatedAttRes.data || attempt;
-
-    // 5. Insert result record in 'results' table
-    const resultPayload = {
-      attempt_id: attemptId,
-      score: earnedMarks,
-      percentage,
-      pass_status: passStatus,
-      total_questions: questions.length,
-      correct_answers: correctCount,
-      incorrect_answers: incorrectCount,
-      unanswered_questions: unansweredCount,
-      time_taken_seconds: timeTakenSeconds,
-      created_at: endTime
-    };
-
-    const resRes = await selectFromTable<Result>('results', 'result', async (tbl) => {
-      return await supabase
-        .from(tbl)
-        .upsert(resultPayload, { onConflict: 'attempt_id' })
-        .select()
-        .single();
-    });
-
-    if (resRes.error || !resRes.data) {
-      handleSupabaseError(resRes.error, 'Failed to save evaluation result in Supabase');
-    }
-
-    return {
-      message: 'Examination submitted and evaluated successfully',
-      result: resRes.data,
-      attempt: updatedAttempt
-    };
   },
 
   // --------------------------------------------------------------------------
   // RESULTS & ANALYTICS
   // --------------------------------------------------------------------------
   async getResultById(resultId: number): Promise<DetailedResultResponse> {
-    const res = await selectFromTable<Result>('results', 'result', async (tbl) => {
-      return await supabase
-        .from(tbl)
-        .select('*')
-        .eq('result_id', resultId)
-        .single();
-    });
+    try {
+      const res = await selectFromTable<Result>('results', 'result', async (tbl) => {
+        return await supabase
+          .from(tbl)
+          .select('*')
+          .eq('result_id', resultId)
+          .single();
+      });
 
-    if (res.error || !res.data) {
-      handleSupabaseError(res.error, `Result #${resultId} not found`);
-    }
+      if (res.error || !res.data) {
+        throw res.error || new Error(`Result #${resultId} not found`);
+      }
 
-    const result = res.data;
+      const result = res.data;
 
-    // Fetch attempt
-    const attRes = await selectFromTable<Attempt>('attempts', 'attempt', async (tbl) => {
-      return await supabase
-        .from(tbl)
-        .select('*')
-        .eq('attempt_id', result.attempt_id)
-        .single();
-    });
-    const attempt = attRes.data || ({} as Attempt);
+      // Fetch attempt
+      const attRes = await selectFromTable<Attempt>('attempts', 'attempt', async (tbl) => {
+        return await supabase
+          .from(tbl)
+          .select('*')
+          .eq('attempt_id', result.attempt_id)
+          .single();
+      });
+      const attempt = attRes.data || ({} as Attempt);
 
-    // Fetch exam & student
-    const exam = await this.getExamById(attempt.exam_id);
-    const stuRes = await selectFromTable<Student>('students', 'student', async (tbl) => {
-      return await supabase
-        .from(tbl)
-        .select('*')
-        .eq('student_id', attempt.student_id)
-        .single();
-    });
-    const student = stuRes.data || ({} as Student);
+      // Fetch exam & student
+      const exam = await this.getExamById(attempt.exam_id);
+      const stuRes = await selectFromTable<Student>('students', 'student', async (tbl) => {
+        return await supabase
+          .from(tbl)
+          .select('*')
+          .eq('student_id', attempt.student_id)
+          .single();
+      });
+      const student = stuRes.data || ({} as Student);
 
-    // Fetch questions & answers for analysis
-    const questions = await this.getExamQuestions(attempt.exam_id);
-    const ansRes = await selectFromTable<any[]>('answers', 'answer', async (tbl) => {
-      return await supabase
-        .from(tbl)
-        .select('*')
-        .eq('attempt_id', attempt.attempt_id);
-    });
-    const answers = ansRes.data || [];
+      // Fetch questions & answers for analysis
+      const questions = await this.getExamQuestions(attempt.exam_id);
+      const ansRes = await selectFromTable<any[]>('answers', 'answer', async (tbl) => {
+        return await supabase
+          .from(tbl)
+          .select('*')
+          .eq('attempt_id', attempt.attempt_id);
+      });
+      const answers = ansRes.data || [];
 
-    const analysis: QuestionAnalysis[] = questions.map((q) => {
-      const studentAns = answers.find((a) => a.question_id === q.question_id);
-      const selectedOpt = q.options.find((o) => o.option_id === studentAns?.selected_option_id);
-      const correctOpt = q.options.find((o) => o.is_correct);
-      const isCorrect = Boolean(selectedOpt && selectedOpt.is_correct);
+      const analysis: QuestionAnalysis[] = questions.map((q) => {
+        const studentAns = answers.find((a) => a.question_id === q.question_id);
+        const selectedOpt = q.options.find((o) => o.option_id === studentAns?.selected_option_id);
+        const correctOpt = q.options.find((o) => o.is_correct);
+        const isCorrect = Boolean(selectedOpt && selectedOpt.is_correct);
+
+        return {
+          question_id: q.question_id,
+          question_text: q.question_text,
+          marks: q.marks,
+          selected_option_id: studentAns?.selected_option_id ?? null,
+          selected_option_text: selectedOpt?.option_text || null,
+          correct_option_id: correctOpt?.option_id || 0,
+          correct_option_text: correctOpt?.option_text || '',
+          is_correct: isCorrect,
+          marks_obtained: isCorrect ? q.marks : 0,
+          is_marked_for_review: Boolean(studentAns?.is_marked_for_review),
+          options: q.options
+        };
+      });
 
       return {
-        question_id: q.question_id,
-        question_text: q.question_text,
-        marks: q.marks,
-        selected_option_id: studentAns?.selected_option_id ?? null,
-        selected_option_text: selectedOpt?.option_text || null,
-        correct_option_id: correctOpt?.option_id || 0,
-        correct_option_text: correctOpt?.option_text || '',
-        is_correct: isCorrect,
-        marks_obtained: isCorrect ? q.marks : 0,
-        is_marked_for_review: Boolean(studentAns?.is_marked_for_review),
-        options: q.options
+        result,
+        attempt,
+        exam,
+        student,
+        analysis
       };
-    });
+    } catch (clientErr: any) {
+      // Direct query fallback to backend authenticated handler
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || '';
 
-    return {
-      result,
-      attempt,
-      exam,
-      student,
-      analysis
-    };
+      const apiRes = await fetch(`/api/results/${resultId}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (!apiRes.ok) {
+        const errJson = await apiRes.json().catch(() => ({}));
+        handleSupabaseError(clientErr || errJson, errJson?.error || `Failed to fetch result #${resultId}`);
+      }
+
+      const body = await apiRes.json();
+      return body;
+    }
   },
 
   async getStudentResults(studentId: number): Promise<Result[]> {
-    // 1. Get attempts for this student
-    const attRes = await selectFromTable<Attempt[]>('attempts', 'attempt', async (tbl) => {
-      return await supabase
-        .from(tbl)
-        .select('*')
-        .eq('student_id', studentId);
-    });
+    try {
+      // 1. Get attempts for this student
+      const attRes = await selectFromTable<Attempt[]>('attempts', 'attempt', async (tbl) => {
+        return await supabase
+          .from(tbl)
+          .select('*')
+          .eq('student_id', studentId);
+      });
 
-    const attempts = attRes.data || [];
-    if (attempts.length === 0) return [];
+      const attempts = attRes.data || [];
+      if (attempts.length === 0) return [];
 
-    const attemptIds = attempts.map((a) => a.attempt_id);
+      const attemptIds = attempts.map((a) => a.attempt_id);
 
-    // 2. Get results for these attempts
-    const resRes = await selectFromTable<Result[]>('results', 'result', async (tbl) => {
-      return await supabase
-        .from(tbl)
-        .select('*')
-        .in('attempt_id', attemptIds)
-        .order('created_at', { ascending: false });
-    });
+      // 2. Get results for these attempts
+      const resRes = await selectFromTable<Result[]>('results', 'result', async (tbl) => {
+        return await supabase
+          .from(tbl)
+          .select('*')
+          .in('attempt_id', attemptIds);
+      });
 
-    const results = resRes.data || [];
-
-    // Attach exam metadata
-    for (const r of results) {
-      const att = attempts.find((a) => a.attempt_id === r.attempt_id);
-      if (att) {
-        try {
-          const ex = await this.getExamById(att.exam_id);
-          r.exam_id = ex.exam_id;
-          r.exam_title = ex.title;
-          r.total_marks = ex.total_marks;
-          r.passing_percentage = ex.passing_percentage;
-        } catch {}
+      if (resRes.error) {
+        throw resRes.error;
       }
-    }
 
-    return results;
+      const results = resRes.data || [];
+
+      // Attach exam metadata
+      for (const r of results) {
+        const att = attempts.find((a) => a.attempt_id === r.attempt_id);
+        if (att) {
+          try {
+            const ex = await this.getExamById(att.exam_id);
+            r.exam_id = ex.exam_id;
+            r.exam_title = ex.title;
+            r.total_marks = ex.total_marks;
+            r.passing_percentage = ex.passing_percentage;
+          } catch {}
+        }
+      }
+
+      return results;
+    } catch {
+      // Direct query fallback to backend authenticated handler
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || '';
+
+      const apiRes = await fetch(`/api/students/${studentId}/results`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (apiRes.ok) {
+        const body = await apiRes.json();
+        return body || [];
+      }
+      return [];
+    }
   },
 
   async getExamResults(examId: number): Promise<{ exam: Exam; total_attempts: number; attempts: any[] }> {
@@ -1221,6 +1864,83 @@ export const api = {
     available_exams: availableExams,
   };
 },
+
+  async getTeacherDashboard(): Promise<TeacherDashboardStats> {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || '';
+      const response = await fetch('/api/dashboard/teacher', {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      });
+      if (response.ok) {
+        return await response.json();
+      }
+    } catch (err) {
+      console.warn('[api.getTeacherDashboard] Server fetch fallback:', err);
+    }
+
+    // Direct client fallback
+    const [allExams, allStudents] = await Promise.all([
+      this.getExams(),
+      this.getStudents().catch(() => [])
+    ]);
+
+    const attRes = await selectFromTable<Attempt[]>('attempts', 'attempt', async (tbl) => {
+      return await supabase.from(tbl).select('*').order('created_at', { ascending: false });
+    });
+    const attempts = attRes.data || [];
+
+    const resRes = await selectFromTable<Result[]>('results', 'result', async (tbl) => {
+      return await supabase.from(tbl).select('*');
+    });
+    const results = resRes.data || [];
+
+    const totalPassed = results.filter((r) => r.pass_status === 'PASSED').length;
+    const totalFailed = results.filter((r) => r.pass_status === 'FAILED').length;
+    const avgScore = results.length > 0
+      ? Number((results.reduce((acc, r) => acc + Number(r.score || 0), 0) / results.length).toFixed(1))
+      : 0;
+    const avgPerc = results.length > 0
+      ? Number((results.reduce((acc, r) => acc + Number(r.percentage || 0), 0) / results.length).toFixed(1))
+      : 0;
+    const passRate = results.length > 0
+      ? Number(((totalPassed / results.length) * 100).toFixed(1))
+      : 0;
+
+    const examPerformance = allExams.map((e) => {
+      const examAtts = attempts.filter((a) => a.exam_id === e.exam_id);
+      const attIds = examAtts.map((a) => a.attempt_id);
+      const examResults = results.filter((r) => attIds.includes(r.attempt_id));
+      const passed = examResults.filter((r) => r.pass_status === 'PASSED').length;
+      const avg = examResults.length > 0
+        ? Number((examResults.reduce((acc, r) => acc + Number(r.percentage || 0), 0) / examResults.length).toFixed(1))
+        : 0;
+      const rate = examResults.length > 0
+        ? Number(((passed / examResults.length) * 100).toFixed(1))
+        : 0;
+
+      return {
+        exam_id: e.exam_id,
+        title: e.title,
+        attempts_count: examAtts.length,
+        avg_percentage: avg,
+        pass_rate: rate
+      };
+    });
+
+    return {
+      total_exams: allExams.length,
+      total_students: allStudents.length,
+      total_attempts: attempts.length,
+      average_score: avgScore,
+      average_percentage: avgPerc,
+      total_passed: totalPassed,
+      total_failed: totalFailed,
+      pass_rate: passRate,
+      recent_attempts: attempts.slice(0, 10),
+      exam_performance: examPerformance
+    };
+  },
   // --------------------------------------------------------------------------
   // DATABASE STATUS & RECORD INSPECTION (Direct Supabase Queries)
   // --------------------------------------------------------------------------

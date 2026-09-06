@@ -128,6 +128,25 @@ export class PostgresService {
     };
   }
 
+  public async findStudentByEmail(email: string): Promise<StudentRow | null> {
+    const { data, error } = await supabaseAdmin
+      .from('students')
+      .select('*')
+      .ilike('email', email.trim().toLowerCase())
+      .maybeSingle();
+
+    if (error || !data) return null;
+
+    return {
+      student_id: data.student_id,
+      user_id: data.user_id,
+      name: data.name,
+      email: data.email,
+      roll_no: data.roll_no,
+      created_at: data.created_at
+    };
+  }
+
   public async findStudentById(studentId: number): Promise<StudentRow | null> {
     const { data, error } = await supabaseAdmin
       .from('students')

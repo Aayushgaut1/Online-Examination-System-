@@ -15,11 +15,31 @@ function calculateRemainingSeconds(attempt: AttemptRow, durationMinutes: number)
   return Math.max(0, Math.floor(remainingMs / 1000));
 }
 
+// Helper: Resolve student_id for authenticated user
+async function resolveStudentId(req: AuthRequest): Promise<number | null> {
+  if (req.user?.student_id) return req.user.student_id;
+  if (req.user?.user_id) {
+    const student = await postgresService.findStudentByUserId(req.user.user_id);
+    if (student) {
+      req.user.student_id = student.student_id;
+      return student.student_id;
+    }
+  }
+  if (req.user?.email) {
+    const student = await postgresService.findStudentByEmail(req.user.email);
+    if (student) {
+      req.user.student_id = student.student_id;
+      return student.student_id;
+    }
+  }
+  return null;
+}
+
 // POST /api/exams/:examId/attempts - Start or resume an exam attempt
 router.post('/exams/:examId/attempts', authenticateToken, requireRole(['STUDENT']), async (req: AuthRequest, res: Response) => {
   try {
     const examId = Number(req.params.examId);
-    const studentId = req.user!.student_id;
+    const studentId = await resolveStudentId(req);
 
     if (!studentId) {
       return res.status(400).json({ error: 'Student profile not linked to user account.' });
@@ -122,7 +142,8 @@ router.get('/attempts/:id', authenticateToken, async (req: AuthRequest, res: Res
       }
 
       const isTeacher = req.user?.role === 'TEACHER' || req.user?.role === 'ADMIN';
-      const isOwner = attempt.student_id === req.user?.student_id;
+      const currentStudentId = await resolveStudentId(req);
+      const isOwner = attempt.student_id === currentStudentId;
       if (!isTeacher && !isOwner) {
         return res.status(403).json({ error: 'Access denied to this exam attempt.' });
       }
@@ -246,7 +267,8 @@ router.put('/attempts/:id/answers', authenticateToken, requireRole(['STUDENT']),
         return res.status(404).json({ error: 'Attempt not found.' });
       }
 
-      if (attempt.student_id !== req.user?.student_id) {
+      const currentStudentId = await resolveStudentId(req);
+      if (!currentStudentId || attempt.student_id !== currentStudentId) {
         return res.status(403).json({ error: 'Unauthorized attempt access.' });
       }
 
@@ -348,7 +370,8 @@ router.post('/attempts/:id/submit', authenticateToken, requireRole(['STUDENT']),
         return res.status(404).json({ error: 'Attempt not found.' });
       }
 
-      if (attempt.student_id !== req.user?.student_id) {
+      const currentStudentId = await resolveStudentId(req);
+      if (!currentStudentId || attempt.student_id !== currentStudentId) {
         return res.status(403).json({ error: 'Unauthorized attempt access.' });
       }
 
