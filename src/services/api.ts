@@ -1977,73 +1977,139 @@ export const api = {
   };
 },
 
-  async getTeacherDashboard(): Promise<TeacherDashboardStats> {
-    // IMPORTANT: The deployed /api/dashboard/teacher route can be connected to a
-    // different/old database connection. The student side already reads the live
-    // Supabase project correctly, so the faculty dashboard must use the same
-    // authenticated Supabase client as the rest of this file.
-    const [allExams, allStudents] = await Promise.all([
-      this.getExams(),
-      this.getStudents().catch(() => [])
-    ]);
+ async getTeacherDashboard(): Promise<TeacherDashboardStats> {
+  // ALWAYS use the current authenticated Supabase database.
+  // Do NOT use /api/dashboard/teacher first because that route
+  // can return stale/old database data.
 
-    const attRes = await selectFromTable<Attempt[]>('attempts', 'attempt', async (tbl) => {
-      return await supabase.from(tbl).select('*').order('created_at', { ascending: false });
-    });
-    const attempts = attRes.data || [];
+  const [allExams, allStudents] = await Promise.all([
+    this.getExams(),
+    this.getStudents().catch(() => [])
+  ]);
 
-    const resRes = await selectFromTable<Result[]>('results', 'result', async (tbl) => {
-      return await supabase.from(tbl).select('*');
-    });
-    const results = resRes.data || [];
+  const attRes = await selectFromTable<Attempt[]>(
+    'attempts',
+    'attempt',
+    async (tbl) => {
+      return await supabase
+        .from(tbl)
+        .select('*')
+        .order('created_at', { ascending: false });
+    }
+  );
 
-    const totalPassed = results.filter((r) => r.pass_status === 'PASSED').length;
-    const totalFailed = results.filter((r) => r.pass_status === 'FAILED').length;
-    const avgScore = results.length > 0
-      ? Number((results.reduce((acc, r) => acc + Number(r.score || 0), 0) / results.length).toFixed(1))
+  const attempts = attRes.data || [];
+
+  const resRes = await selectFromTable<Result[]>(
+    'results',
+    'result',
+    async (tbl) => {
+      return await supabase
+        .from(tbl)
+        .select('*');
+    }
+  );
+
+  const results = resRes.data || [];
+
+  const totalPassed = results.filter(
+    (r) => r.pass_status === 'PASSED'
+  ).length;
+
+  const totalFailed = results.filter(
+    (r) => r.pass_status === 'FAILED'
+  ).length;
+
+  const avgScore =
+    results.length > 0
+      ? Number(
+          (
+            results.reduce(
+              (acc, r) => acc + Number(r.score || 0),
+              0
+            ) / results.length
+          ).toFixed(1)
+        )
       : 0;
-    const avgPerc = results.length > 0
-      ? Number((results.reduce((acc, r) => acc + Number(r.percentage || 0), 0) / results.length).toFixed(1))
-      : 0;
-    const passRate = results.length > 0
-      ? Number(((totalPassed / results.length) * 100).toFixed(1))
+
+  const avgPerc =
+    results.length > 0
+      ? Number(
+          (
+            results.reduce(
+              (acc, r) => acc + Number(r.percentage || 0),
+              0
+            ) / results.length
+          ).toFixed(1)
+        )
       : 0;
 
-    const examPerformance = allExams.map((e) => {
-      const examAtts = attempts.filter((a) => a.exam_id === e.exam_id);
-      const attIds = examAtts.map((a) => a.attempt_id);
-      const examResults = results.filter((r) => attIds.includes(r.attempt_id));
-      const passed = examResults.filter((r) => r.pass_status === 'PASSED').length;
-      const avg = examResults.length > 0
-        ? Number((examResults.reduce((acc, r) => acc + Number(r.percentage || 0), 0) / examResults.length).toFixed(1))
+  const passRate =
+    results.length > 0
+      ? Number(
+          ((totalPassed / results.length) * 100).toFixed(1)
+        )
+      : 0;
+
+  const examPerformance = allExams.map((exam) => {
+    const examAttempts = attempts.filter(
+      (a) => a.exam_id === exam.exam_id
+    );
+
+    const attemptIds = examAttempts.map(
+      (a) => a.attempt_id
+    );
+
+    const examResults = results.filter((r) =>
+      attemptIds.includes(r.attempt_id)
+    );
+
+    const passed = examResults.filter(
+      (r) => r.pass_status === 'PASSED'
+    ).length;
+
+    const averagePercentage =
+      examResults.length > 0
+        ? Number(
+            (
+              examResults.reduce(
+                (acc, r) =>
+                  acc + Number(r.percentage || 0),
+                0
+              ) / examResults.length
+            ).toFixed(1)
+          )
         : 0;
-      const rate = examResults.length > 0
-        ? Number(((passed / examResults.length) * 100).toFixed(1))
-        : 0;
 
-      return {
-        exam_id: e.exam_id,
-        title: e.title,
-        attempts_count: examAtts.length,
-        avg_percentage: avg,
-        pass_rate: rate
-      };
-    });
+    const examPassRate =
+      examResults.length > 0
+        ? Number(
+            ((passed / examResults.length) * 100).toFixed(1)
+          )
+        : 0;
 
     return {
-      total_exams: allExams.length,
-      total_students: allStudents.length,
-      total_attempts: attempts.length,
-      average_score: avgScore,
-      average_percentage: avgPerc,
-      total_passed: totalPassed,
-      total_failed: totalFailed,
-      pass_rate: passRate,
-      recent_attempts: attempts.slice(0, 10),
-      exam_performance: examPerformance
+      exam_id: exam.exam_id,
+      title: exam.title,
+      attempts_count: examAttempts.length,
+      avg_percentage: averagePercentage,
+      pass_rate: examPassRate
     };
-  },
+  });
 
+  return {
+    total_exams: allExams.length,
+    total_students: allStudents.length,
+    total_attempts: attempts.length,
+    average_score: avgScore,
+    average_percentage: avgPerc,
+    total_passed: totalPassed,
+    total_failed: totalFailed,
+    pass_rate: passRate,
+    recent_attempts: attempts.slice(0, 10),
+    exam_performance: examPerformance
+  };
+},
   // --------------------------------------------------------------------------
   // DATABASE STATUS & RECORD INSPECTION (Direct Supabase Queries)
   // --------------------------------------------------------------------------
