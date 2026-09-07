@@ -672,6 +672,118 @@ export const api = {
     handleSupabaseError(res.error, `Exam #${examId} not found`);
   },
 
+  async updateExam(
+    examId: number,
+    data: {
+      title?: string;
+      description?: string;
+      duration_minutes?: number | string;
+      total_marks?: number | string;
+      passing_percentage?: number | string;
+      status?: string;
+      is_published?: boolean;
+    }
+  ): Promise<{ message: string; exam: Exam }> {
+    // Verify authenticated faculty/admin
+    const { data: { user: authUser }, error: authError } = await supabase.auth.getUser();
+    if (authError || !authUser?.email) {
+      throw new Error('Authentication required: Please log in as faculty to edit an exam.');
+    }
+
+    const cleanEmail = authUser.email.toLowerCase();
+    const { data: userProfile, error: userError } = await supabase
+      .from('users')
+      .select('*')
+      .ilike('email', cleanEmail)
+      .maybeSingle();
+
+    if (userError || !userProfile) {
+      throw new Error('User profile not found in database. Please log in again.');
+    }
+
+    const roleUpper = String(userProfile.role || '').toUpperCase();
+    if (roleUpper !== 'TEACHER' && roleUpper !== 'ADMIN') {
+      throw new Error('Unauthorized: Only faculty members can edit examinations.');
+    }
+
+    const current = await this.getExamById(examId);
+    const patch: Record<string, any> = {};
+
+    if (data.title !== undefined) {
+      const title = String(data.title).trim();
+      if (!title) throw new Error('Exam title is required.');
+      patch.title = title;
+    }
+    if (data.description !== undefined) patch.description = String(data.description).trim();
+    if (data.duration_minutes !== undefined) patch.duration_minutes = Math.max(1, Number(data.duration_minutes) || 30);
+    if (data.total_marks !== undefined) patch.total_marks = Math.max(1, Number(data.total_marks) || 1);
+    if (data.passing_percentage !== undefined) {
+      patch.passing_percentage = Math.min(100, Math.max(0, Number(data.passing_percentage) || 0));
+    }
+    if (data.status !== undefined) {
+      patch.status = String(data.status).toUpperCase() === 'PUBLISHED' ? 'PUBLISHED' : 'DRAFT';
+    } else if (data.is_published !== undefined) {
+      patch.status = data.is_published ? 'PUBLISHED' : 'DRAFT';
+    }
+
+    if (Object.keys(patch).length === 0) {
+      return { message: 'No exam changes were provided.', exam: current };
+    }
+
+    const res = await selectFromTable<any>('exams', 'exam', async (tbl) => {
+      return await supabase
+        .from(tbl)
+        .update(patch)
+        .eq('exam_id', examId)
+        .select()
+        .single();
+    });
+
+    if (!res.error && res.data) {
+      const exam: Exam = {
+        ...res.data,
+        is_published:
+          res.data.is_published === true ||
+          String(res.data.status || '').toUpperCase() === 'PUBLISHED',
+        status: res.data.status || 'DRAFT'
+      } as Exam;
+      return { message: 'Exam updated successfully', exam };
+    }
+
+    // Authenticated server fallback for deployments where client UPDATE is blocked by RLS.
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || '';
+      const response = await fetch(`/api/exams/${examId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ ...patch, is_published: patch.status === 'PUBLISHED' })
+      });
+
+      if (response.ok) {
+        const body = await response.json();
+        const serverExam = body.exam || body;
+        return {
+          message: body.message || 'Exam updated successfully',
+          exam: {
+            ...serverExam,
+            is_published:
+              serverExam.is_published === true ||
+              String(serverExam.status || '').toUpperCase() === 'PUBLISHED',
+            status: serverExam.status || patch.status || current.status || 'DRAFT'
+          } as Exam
+        };
+      }
+    } catch (err) {
+      console.warn(`[api.updateExam] Server fallback for #${examId}:`, err);
+    }
+
+    handleSupabaseError(res.error, `Failed to update exam #${examId}`);
+  },
+
   async togglePublishExam(examId: number): Promise<{
     message: string;
     is_published: boolean;
@@ -1866,20 +1978,10 @@ export const api = {
 },
 
   async getTeacherDashboard(): Promise<TeacherDashboardStats> {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token || '';
-      const response = await fetch('/api/dashboard/teacher', {
-        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
-      });
-      if (response.ok) {
-        return await response.json();
-      }
-    } catch (err) {
-      console.warn('[api.getTeacherDashboard] Server fetch fallback:', err);
-    }
-
-    // Direct client fallback
+    // IMPORTANT: The deployed /api/dashboard/teacher route can be connected to a
+    // different/old database connection. The student side already reads the live
+    // Supabase project correctly, so the faculty dashboard must use the same
+    // authenticated Supabase client as the rest of this file.
     const [allExams, allStudents] = await Promise.all([
       this.getExams(),
       this.getStudents().catch(() => [])
@@ -1941,6 +2043,7 @@ export const api = {
       exam_performance: examPerformance
     };
   },
+
   // --------------------------------------------------------------------------
   // DATABASE STATUS & RECORD INSPECTION (Direct Supabase Queries)
   // --------------------------------------------------------------------------
